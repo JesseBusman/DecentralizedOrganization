@@ -2,7 +2,7 @@
 
 pragma solidity ^0.4.18;
 
-contract Corporation
+contract Organization
 {
     // The address of the contract of the company owned by this contract
     address public ownedCompanyContract;
