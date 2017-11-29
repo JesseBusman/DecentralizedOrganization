@@ -13,14 +13,10 @@ contract GlobalOrganizationRegistry
 
 contract Organization
 {
-    function min(uint256 i, uint256 j) public pure
-    {
-        if (i <= j) return i;
-        else return j;
-    }
+    uint256 public constant MILLION = 10 ** 6;
     
     ////////////////////////////////////////////
-    ////////////////////// Internal share functions (ERC20 compatible)
+    ////////////////////// Share functions (ERC20 compatible)
     
     // ERC20 interface implentation:
     function totalSupply() constant returns (uint totalSupply)
@@ -51,7 +47,9 @@ contract Organization
     event Transfer(address indexed _from, address indexed _to, uint _value);
     event Approval(address indexed _owner, address indexed _spender, uint _value);
     
-    // State variables:
+    ////////////////////////////////////////////
+    ////////////////////// Share state variables (ERC20 compatible)
+    
     mapping(address => uint256) addressesToShares;
     uint256 public totalShares; // Redundant tracker of total amount of shares
     address[] public allShareholders; // Tracker of all shareholders
@@ -61,17 +59,19 @@ contract Organization
     {
         require(addressesToShares[from] >= amount);
         
-        addressesToShares[from] -= amount;
-        addressesToShares[to] += amount;
-        
-        if (amount > 0 && addressesToShares[to] == amount)
+        // If this is a new shareholder, add them to the club!
+        if (amount > 0 && addressesToShares[to] == 0)
         {
             allShareholders.push(to);
         }
         
-        // TODO make sure the same shares cannot vote multiple times on a proposal
+        addressesToShares[from] -= amount;
+        addressesToShares[to] += amount;
+        
+        // Make sure the same shares cannot vote multiple times on a proposal
         for (uint256 i=0; i<unfinalizedPropalIndexes.length; i++)
         {
+            if (unfinalizedPropalIndexes[i] == MAX_UINT256) continue;
             uint256 votesMoved = min(proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[from], amount);
             proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[from] -= votesMoved;
             proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[to] += votesMoved;
@@ -83,19 +83,30 @@ contract Organization
     function _grant_shares(address to, uint256 amount) internal
     {
         totalShares += amount;
-        // TODO update proposal votes?
+        addressesToShares[to] += amount;
     }
     function _destroy_shares(uint256 amount) internal
     {
         require(addressesToShares[this] >= amount);
         addressesToShares[this] -= amount;
         totalShares -= amount;
-        // TODO update proposal votes?
     }
     function _increase_share_granularity(uint256 multiplier) internal
     {
+        // Multiply the total amount of shares.
+        // Using safeMul protects against overflow.
+        totalShares = safeMul(totalShares, multiplier);
         
-        // TODO update proposal votes?
+        // totalShares * MILLION must always be smaller than MAX_UINT256
+        require(totalShares * MILLION < MAX_UINT256);
+        
+        // Multiply every shareholder's individual share count.
+        // We don't have to check for overflow here because totalShares
+        // is always >= each individual's share count.
+        for (uint256 i=0; i<allShareholders.length; i++)
+        {
+            addressesToShares[allShareholders[i]] *= multiplier;
+        }
     }
     
     // Events
@@ -104,11 +115,11 @@ contract Organization
     event ProposalFinished(uint256 index);
 	
 	// Meta-configuration settings
-	uint256 minimumVotesToChangeMinimumVoteSettings;
-	uint256 minimumVotesToChangeFunctionRequirements;
-	uint256 minimumVotesToIncreaseShareGranularity;
-    uint256 minimumVotesToGrantShares;
-    uint256 minimumVotesToDestroyShares;
+	uint256 minimumVotesPerMillionToChangeMinimumVoteSettings;
+	uint256 minimumVotesPerMillionToChangeFunctionRequirements;
+	uint256 minimumVotesPerMillionToIncreaseShareGranularity;
+    uint256 minimumVotesPerMillionToGrantShares;
+    uint256 minimumVotesPerMillionToDestroyShares;
     
     // When a CALL_FUNCTION Proposal is submitted,
     // the defaultFunctionRequirements will need to be met for it to be
@@ -195,13 +206,13 @@ contract Organization
         bytes param6;
         
         // Voting status
+        bool executed;
         string description;
-        uint256 yesVotesRequired;
+        uint256 votesPerMillionRequired;
         uint256 totalVotesCast;
         uint256 totalYesVotes;
         mapping(address => uint256) addressesToVotesCast;
-        bool executed;
-        // TODO remember who voted yes & no
+        mapping(address => uint256) addressesToYesVotesCast;
     }
     Proposal[] public proposals;
     uint256[] public unfinalizedPropalIndexes;
@@ -216,13 +227,13 @@ contract Organization
         {
             Proposal storage proposal = proposals[proposalIndexes[i]];
             
-            if (sharesAvailableToVoteWith > proposal.shareholdersVotedShares[msg.sender])
+            if (sharesAvailableToVoteWith > proposal.addressesToVotesCast[msg.sender])
             {
-                uint256 unusedVotes = sharesAvailableToVoteWith - proposal.shareholdersVotedShares[msg.sender];
+                uint256 unusedVotes = sharesAvailableToVoteWith - proposal.addressesToVotesCast[msg.sender];
                 
-                proposal.totalSharesVoted += unusedVotes;
-                if (proposalVotes[i] == true) proposal.totalSharesVotedYes += unusedVotes;
-                proposal.shareholdersVotedShares[msg.sender] += unusedVotes;
+                proposal.totalVotesCast += unusedVotes;
+                if (proposalVotes[i] == true) proposal.totalYesVotes += unusedVotes;
+                proposal.addressesToVotesCast[msg.sender] += unusedVotes;
             }
         }
     }
@@ -230,7 +241,8 @@ contract Organization
     function executeProposal(uint256 proposalIndex) external
     {
         Proposal storage proposal = proposals[proposalIndex];
-        require(proposal.totalSharesVotedYes >= proposal.votesRequired);
+        require(proposal.executed == false);
+        require(proposal.totalYesVotes >= (totalShares * proposal.votesPerMillionRequired) / MILLION);
         if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
         {
             _grant_shares(address(proposal.param1), proposal.param2);
@@ -255,7 +267,7 @@ contract Organization
         {
             
         }
-        else if (proposal.proposalType == ProposalType.SET_MINMUM_VOTES_TO_ALTER_FUNCTION_RESTRICTIONS)
+        else if (proposal.proposalType == ProposalType.SET_GLOBAL_SETTINGS)
         {
             
         }
@@ -265,42 +277,34 @@ contract Organization
         }
     }
     
-    function proposeToGrantNewShares(address destination, uint256 shares) external
+    function _addProposalToUnfinishedList(uint256 index) internal
     {
-        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
-        proposals.push(Proposal(
-            ProposalType.GRANT_NEW_SHARES,
-            uint256(destination),
-            shares,
-            0,
-            0,
-            "",
-            minimumVotesToGrantShares, // votesRequired
-            0,
-            0
-        ));
+        unfinalizedPropalIndexes[index];
     }
     
-    function proposeToIncreaseShareGranularity(uint256 multiplier) external
+    function proposeToGrantNewShares(address destination, uint256 shares, string description) external
     {
-        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
-        proposals.push(Proposal(
-            ProposalType.INCREASE_SHARE_GRANULARITY,
-            multiplier,
-            0,
-            0,
-            0,
-            "",
-            minimumVotesToIncreaseShareGranularity, // votesRequired
-            0,
-            0
-        ));
+        proposals.push(Proposal({
+            proposalType: ProposalType.GRANT_NEW_SHARES,
+            param1: uint256(destination),
+            param2: shares,
+            description: description,
+            votesPerMillionRequired: minimumVotesPerMillionToGrantShares
+        }));
     }
     
-    function proposeToCallFunction(address contractAddress, uint256 etherAmount, uint256 methodId, bytes parameters) public
+    function proposeToIncreaseShareGranularity(uint256 multiplier, string description) external
     {
-        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
-        
+        proposals.push(Proposal({
+            proposalType: ProposalType.INCREASE_SHARE_GRANULARITY,
+            param1: multiplier,
+            description: description,
+            votesPerMillionRequired: minimumVotesPerMillionToIncreaseShareGranularity
+        }));
+    }
+    
+    function proposeToCallFunction(address contractAddress, uint256 etherAmount, uint256 methodId, bytes arguments, string description) public
+    {
         FunctionRequirements storage requirements = defaultFunctionRequirements;
         bool requireMatchingCustomRequirements = false;
         bool foundMatchingCustomRequirements = false;
@@ -321,17 +325,15 @@ contract Organization
         
         require(requireMatchingCustomRequirements == false || foundMatchingCustomRequirements == true);
         
-        proposals.push(Proposal(
-            ProposalType.CALL_FUNCTION,
-            uint256(contractAddress),
-            etherAmount,
-            methodId,
-            0,
-            parameters,
-            requirements.minimumVotes, // votesRequired
-            0,
-            0
-        ));
+        proposals.push(Proposal({
+            proposalType: ProposalType.CALL_FUNCTION,
+            param1: uint256(contractAddress),
+            param2: etherAmount,
+            param3: methodId,
+            param6: arguments,
+            votesPerMillionRequired: requirements.minimumVotes,
+            description: description
+        }));
     }
     
     function proposeToTransferEther(address destinationAddress, uint256 etherAmount) external
@@ -350,7 +352,7 @@ contract Organization
         availableOrganizationFunds += msg.value;
     }
     
-    function Organization(uint256 _totalShares, uint256 _minimumVotesToPerformAction) public
+    function Organization(uint256 _totalShares, uint256 _minimumVotesPerMillionToPerformAction) public
     {
         // Grant initial shares
         addressesToShares[msg.sender] = _totalShares;
@@ -358,13 +360,16 @@ contract Organization
         allShareholders.push(msg.sender);
         
         // Set default settings
-        minimumVotesToChangeFunctionRequirements = _totalShares;
-        minimumVotesToGrantShares = _totalShares;
-        minimumSharesToSubmitProposal = 0;
+        minimumVotesPerMillionToChangeFunctionRequirements = MILLION;
+        minimumVotesPerMillionToGrantShares = MILLION;
+        minimumVotesPerMillionToIncreaseShareGranularity = MILLION / 4;
+        minimumVotesPerMillionToChangeMinimumVoteSettings = MILLION;
+        minimumVotesPerMillionToDestroyShares = MILLION;
+        minimumVotesPerMillionToGrantShares = MILLION;
         defaultFunctionRequirements.active = true;
         defaultFunctionRequirements.minimumEther = 0;
         defaultFunctionRequirements.maximumEther = ~uint256(0);
-        defaultFunctionRequirements.minimumVotes = _minimumVotesToPerformAction;
+        defaultFunctionRequirements.minimumVotesPerMillion = _minimumVotesPerMillionToPerformAction;
         defaultFunctionRequirements.organizationRefundsTxFee = false;
     }
 
@@ -377,20 +382,7 @@ contract Organization
         msg.sender.transfer(amountToWithdraw);
     }
     
-    function increaseShareGranularity(uint256 multiplier) internal
-    {
-        // Multiply the total amount of shares.
-        // Using safeMul protects against overflow
-        totalShares = safeMul(totalShares, multiplier);
-        
-        // Multiply every shareholder's individual share count.
-        // We don't have to check for overflow here because totalShares
-        // is always >= each individual's share count.
-        for (uint256 i=0; i<allShareholders.length; i++)
-        {
-            addressesToShares[allShareholders[i]] *= multiplier;
-        }
-    }
+
 
     
     ////////////////////////////////////////////
@@ -500,4 +492,10 @@ contract Organization
         assert(a == 0 || c / a == b); // throw on overflow & underflow
         return c;
     }
+    function min(uint256 i, uint256 j) pure internal returns (uint256)
+    {
+        if (i <= j) return i;
+        else return j;
+    }
+    uint256 constant MAX_UINT256 = ~uint256(0);
 }
