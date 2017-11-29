@@ -2,104 +2,372 @@
 
 pragma solidity ^0.4.18;
 
+contract GlobalOrganizationRegistry
+{
+    address[] public organizationContractAddresses;
+    function addOrganization(address contractAddress) external
+    {
+        organizationContractAddresses.push(contractAddress);
+    }
+}
+
 contract Organization
 {
-    // The address of the contract of the company owned by this contract
-    address public ownedCompanyContract;
+    function min(uint256 i, uint256 j) public pure
+    {
+        if (i <= j) return i;
+        else return j;
+    }
     
+    ////////////////////////////////////////////
+    ////////////////////// Internal share functions (ERC20 compatible)
+    
+    // ERC20 interface implentation:
+    function totalSupply() constant returns (uint totalSupply)
+    {
+        return totalShares;
+    }
+    function balanceOf(address _owner) constant returns (uint balance)
+    {
+        return addressesToShares[_owner];
+    }
+    function transfer(address _to, uint _value) returns (bool success)
+    {
+        _transfer_shares(msg.sender, _to, _value);
+        return true;
+    }
+    function transferFrom(address _from, address _to, uint _value) returns (bool success)
+    {
+        revert();
+    }
+    function approve(address _spender, uint _value) returns (bool success)
+    {
+        revert();
+    }
+    function allowance(address _owner, address _spender) constant returns (uint remaining)
+    {
+        revert();
+    }
+    event Transfer(address indexed _from, address indexed _to, uint _value);
+    event Approval(address indexed _owner, address indexed _spender, uint _value);
+    
+    // State variables:
+    mapping(address => uint256) addressesToShares;
+    uint256 public totalShares; // Redundant tracker of total amount of shares
+    address[] public allShareholders; // Tracker of all shareholders
+    
+    // Internal functions:
+    function _transfer_shares(address from, address to, uint256 amount) internal
+    {
+        require(addressesToShares[from] >= amount);
+        
+        addressesToShares[from] -= amount;
+        addressesToShares[to] += amount;
+        
+        if (amount > 0 && addressesToShares[to] == amount)
+        {
+            allShareholders.push(to);
+        }
+        
+        // TODO make sure the same shares cannot vote multiple times on a proposal
+        for (uint256 i=0; i<unfinalizedPropalIndexes.length; i++)
+        {
+            uint256 votesMoved = min(proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[from], amount);
+            proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[from] -= votesMoved;
+            proposals[unfinalizedPropalIndexes[i]].addressesToVotesCast[to] += votesMoved;
+        }
+        
+        // Trigger event
+        Transfer(from, to, amount);
+    }
+    function _grant_shares(address to, uint256 amount) internal
+    {
+        totalShares += amount;
+        // TODO update proposal votes?
+    }
+    function _destroy_shares(uint256 amount) internal
+    {
+        require(addressesToShares[this] >= amount);
+        addressesToShares[this] -= amount;
+        totalShares -= amount;
+        // TODO update proposal votes?
+    }
+    function _increase_share_granularity(uint256 multiplier) internal
+    {
+        
+        // TODO update proposal votes?
+    }
+    
+    // Events
+    event EtherReceived(address source, uint256 amount);
+    event ProposalSubmitted(uint256 index);
+    event ProposalFinished(uint256 index);
+	
+	// Meta-configuration settings
+	uint256 minimumVotesToChangeMinimumVoteSettings;
+	uint256 minimumVotesToChangeFunctionRequirements;
+	uint256 minimumVotesToIncreaseShareGranularity;
+    uint256 minimumVotesToGrantShares;
+    uint256 minimumVotesToDestroyShares;
+    
+    // When a CALL_FUNCTION Proposal is submitted,
+    // the defaultFunctionRequirements will need to be met for it to be
+    // executed.
+    // For each function of each contract on the blockchain, an optional custom
+    // FunctionRequiements can be configured. For example, you can configure one
+    // function to require 10% votes, and another to require 80% votes.
+    
+	struct FunctionRequirements
+	{
+	    // Metadata
+		bool active;
+	    address contractAddress;
+	    uint32 methodId;
+	    
+	    // Requirements for function call
+		uint256 minimumEther;
+		uint256 maximumEther;
+		uint256 minimumVotes;
+		
+		// Additional
+		bool organizationRefundsTxFee;
+	}
+	
+	FunctionRequirements public defaultFunctionRequirements;
+	
+	// We need a way to list all active function restrictions
+	uint256[] public contractFunctionsWithCustomFunctionRequirements;
+	
+	// A mapping of (contractAddress XOR methodId) to FunctionRequirements's
+	mapping(uint256 => FunctionRequirements[]) public contractFunctionRequirements;
+	
     // All the funds in this corporation contract are accounted for
     // in these two variables, except for the funds locked inside buy orders
     mapping(address => uint256) public addressesToShareholderBalance;
-    uint256 public availableCorporateFunds;
-    
-    // The functions of the company that this contract may call
-    struct Function
-    {
-        string name;
-        uint256 mimumSharesVoteToCall; // Set to 0 to allow anyone to call it for free.
-    }
-    Function[] public functions;
+    uint256 public availableOrganizationFunds;
     
     enum ProposalType
     {
         __NONE,
         
-        GRANT_NEW_SHARES, // param1
-        CALL_FUNCTION, // 
-        INCREASE_SHARE_GRANULARITY, // param1 = the multiplier
-        SET_OWNED_COMPANY_CONTRACT_ADDRESS // param2 = the new company adddress
+        GRANT_NEW_SHARES,
+        // param1: address to grant shares to
+        // param2: amount of shares
+        
+        DESTROY_SHARES,
+        // param1: amount of shares to destroy
+        
+        INCREASE_SHARE_GRANULARITY,
+        // param1: multiplier
+        
+        CALL_FUNCTION,
+        // param1: address to call
+        // param2: amount of ether to transfer
+        // param3: methodId
+        // param6: arguments
+        
+        REWARD_SHAREHOLDERS,
+        // param1: total amount of ETH to reward
+        
+        SET_FUNCTION_RESTRICTION,
+        // param1: the contract address
+        // param2: the method ID
+        // param3: minimum votes required
+        // param4: minimum ether to send
+        // param5: maximum ether to send
+        
+        SET_GLOBAL_SETTINGS
+    	// param1: minimumVotesToChangeMinimumVoteSettings      (if equal to FFF..., keep the current value)
+    	// param2: minimumVotesToChangeFunctionRequirements     (if equal to FFF..., keep the current value)
+    	// param3: minimumVotesToIncreaseShareGranularity       (if equal to FFF..., keep the current value)
+        // param4: minimumVotesToGrantShares                    (if equal to FFF..., keep the current value)
+        // param5: minimumVotesToDestroyShares                  (if equal to FFF..., keep the current value)
     }
     struct Proposal
     {
+        // Parameters
         ProposalType proposalType;
         uint256 param1;
-        address param2;
-        string param3;
-        mapping(address => bool) addressesVoted;
-        uint256 totalSharesVoted;
-        uint256 totalSharesVotedYes;
+        uint256 param2;
+        uint256 param3;
+        uint256 param4;
+        uint256 param5;
+        bytes param6;
+        
+        // Voting status
+        string description;
+        uint256 yesVotesRequired;
+        uint256 totalVotesCast;
+        uint256 totalYesVotes;
+        mapping(address => uint256) addressesToVotesCast;
+        bool executed;
+        // TODO remember who voted yes & no
     }
-    Proposal[] proposals;
+    Proposal[] public proposals;
+    uint256[] public unfinalizedPropalIndexes;
     
-    // All the shares are accounted for in this variable, except for the shares
-    // locked inside sell orders
-    mapping(address => uint256) addressesToShareholderShares;
+    function voteOnProposals(uint256[] proposalIndexes, bool[] proposalVotes) external
+    {
+        require(proposalIndexes.length == proposalVotes.length);
+        
+        uint256 sharesAvailableToVoteWith = addressesToShares[msg.sender];
+        
+        for (uint i=0; i<proposalIndexes.length; i++)
+        {
+            Proposal storage proposal = proposals[proposalIndexes[i]];
+            
+            if (sharesAvailableToVoteWith > proposal.shareholdersVotedShares[msg.sender])
+            {
+                uint256 unusedVotes = sharesAvailableToVoteWith - proposal.shareholdersVotedShares[msg.sender];
+                
+                proposal.totalSharesVoted += unusedVotes;
+                if (proposalVotes[i] == true) proposal.totalSharesVotedYes += unusedVotes;
+                proposal.shareholdersVotedShares[msg.sender] += unusedVotes;
+            }
+        }
+    }
     
-    uint256 public totalShares; // Redundant tracker of total amount of shares
+    function executeProposal(uint256 proposalIndex) external
+    {
+        Proposal storage proposal = proposals[proposalIndex];
+        require(proposal.totalSharesVotedYes >= proposal.votesRequired);
+        if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
+        {
+            _grant_shares(address(proposal.param1), proposal.param2);
+        }
+        else if (proposal.proposalType == ProposalType.DESTROY_SHARES)
+        {
+            _destroy_shares(proposal.param1);
+        }
+        else if (proposal.proposalType == ProposalType.INCREASE_SHARE_GRANULARITY)
+        {
+            
+        }
+        else if (proposal.proposalType == ProposalType.CALL_FUNCTION)
+        {
+            
+        }
+        else if (proposal.proposalType == ProposalType.REWARD_SHAREHOLDERS)
+        {
+            
+        }
+        else if (proposal.proposalType == ProposalType.SET_FUNCTION_RESTRICTION)
+        {
+            
+        }
+        else if (proposal.proposalType == ProposalType.SET_MINMUM_VOTES_TO_ALTER_FUNCTION_RESTRICTIONS)
+        {
+            
+        }
+        else
+        {
+            revert();
+        }
+    }
     
-    address[] public allShareholders; // Tracker of all shareholders
+    function proposeToGrantNewShares(address destination, uint256 shares) external
+    {
+        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
+        proposals.push(Proposal(
+            ProposalType.GRANT_NEW_SHARES,
+            uint256(destination),
+            shares,
+            0,
+            0,
+            "",
+            minimumVotesToGrantShares, // votesRequired
+            0,
+            0
+        ));
+    }
     
-    mapping(address => uint256) addressesToTotalDonations;
+    function proposeToIncreaseShareGranularity(uint256 multiplier) external
+    {
+        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
+        proposals.push(Proposal(
+            ProposalType.INCREASE_SHARE_GRANULARITY,
+            multiplier,
+            0,
+            0,
+            0,
+            "",
+            minimumVotesToIncreaseShareGranularity, // votesRequired
+            0,
+            0
+        ));
+    }
+    
+    function proposeToCallFunction(address contractAddress, uint256 etherAmount, uint256 methodId, bytes parameters) public
+    {
+        require(addressesToShares[msg.sender] >= minimumSharesToSubmitProposal);
+        
+        FunctionRequirements storage requirements = defaultFunctionRequirements;
+        bool requireMatchingCustomRequirements = false;
+        bool foundMatchingCustomRequirements = false;
+        
+        for (uint i=0; i<contractFunctionRequirements[uint256(contractAddress) ^ methodId].length; i++)
+        {
+            if (contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].active)
+            {
+                requireMatchingCustomRequirements = true;
+                if (etherAmount >= contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].minimumEther &&
+                    etherAmount <= contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].maximumEther)
+                {
+                    foundMatchingCustomRequirements = true;
+                    requirements = contractFunctionRequirements[uint256(contractAddress) ^ methodId][i];
+                }
+            }
+        }
+        
+        require(requireMatchingCustomRequirements == false || foundMatchingCustomRequirements == true);
+        
+        proposals.push(Proposal(
+            ProposalType.CALL_FUNCTION,
+            uint256(contractAddress),
+            etherAmount,
+            methodId,
+            0,
+            parameters,
+            requirements.minimumVotes, // votesRequired
+            0,
+            0
+        ));
+    }
+    
+    function proposeToTransferEther(address destinationAddress, uint256 etherAmount) external
+    {
+        proposeToCallFunction(destinationAddress, etherAmount, 0, "");
+    }
+    
+    function proposeToTransferTokens(address tokenContract, uint256 tokensAmount) external
+    {
+        proposeToCallFunction();
+    }
     
     // Fallback function:
     function() public payable
     {
-        // If we receive funds without a function call from the company contract,
-        // it is counted as profit
-        if (msg.sender == ownedCompanyContract)
-        {
-            availableCorporateFunds += msg.value;
-        }
-        
-        // If we receive funds without a function call from anyone else,
-        // add it to their personal balance. It may have been sent by mistake,
-        // and they should be free to withdraw it.
-        else
-        {
-            addressesToShareholderBalance[msg.sender] += msg.value;
-        }
+        availableOrganizationFunds += msg.value;
     }
     
-    function donateToCorporation(uint256 amountToDonate) public payable
+    function Organization(uint256 _totalShares, uint256 _minimumVotesToPerformAction) public
     {
-        addressesToShareholderBalance[msg.sender] += msg.value;
-        
-        require(addressesToShareholderBalance[msg.sender] >= amountToDonate);
-        
-        addressesToShareholderBalance[msg.sender] -= amountToDonate;
-        availableCorporateFunds += amountToDonate;
-    }
-    
-    function Corporation(bytes32[] _functionData, uint256 _initialAmountOfShares, address _ownedCompanyContract) public
-    {
-        addressesToShareholderShares[msg.sender] = _initialAmountOfShares;
-        totalShares = _initialAmountOfShares;
+        // Grant initial shares
+        addressesToShares[msg.sender] = _totalShares;
+        totalShares = _totalShares;
         allShareholders.push(msg.sender);
-        ownedCompanyContract = _ownedCompanyContract;
-    }
-    
-    function transferShares(address _recipient, uint256 _amountOfSharesToTransfer) public
-    {
-        // The sender must have enough shares.
-        require(addressesToShareholderShares[msg.sender] >= _amountOfSharesToTransfer);
         
-        // Deduct shares from the sender
-        addressesToShareholderShares[msg.sender] -= _amountOfSharesToTransfer;
-        
-        // Add shares to the recipient
-        addressesToShareholderShares[_recipient] += _amountOfSharesToTransfer;
+        // Set default settings
+        minimumVotesToChangeFunctionRequirements = _totalShares;
+        minimumVotesToGrantShares = _totalShares;
+        minimumSharesToSubmitProposal = 0;
+        defaultFunctionRequirements.active = true;
+        defaultFunctionRequirements.minimumEther = 0;
+        defaultFunctionRequirements.maximumEther = ~uint256(0);
+        defaultFunctionRequirements.minimumVotes = _minimumVotesToPerformAction;
+        defaultFunctionRequirements.organizationRefundsTxFee = false;
     }
-    
+
     function withdraw(uint256 amountToWithdraw) public
     {
         require(addressesToShareholderBalance[msg.sender] >= amountToWithdraw);
@@ -120,18 +388,10 @@ contract Organization
         // is always >= each individual's share count.
         for (uint256 i=0; i<allShareholders.length; i++)
         {
-            addressesToShareholderShares[allShareholders[i]] *= multiplier;
+            addressesToShares[allShareholders[i]] *= multiplier;
         }
     }
-    
-    function voteOnProposals() public
-    {
-        uint256 sharesAvailableToVoteWith = addressesToShareholderShares[msg.sender];
-        
-        require(sharesAvailableToVoteWith > 0);
-        
-        
-    }
+
     
     ////////////////////////////////////////////
     ////////////////////// Share trading
@@ -199,7 +459,7 @@ contract Organization
         assert(addressesToShareholderBalance[msg.sender] >= totalPricePaidSoFar);
         
         addressesToShareholderBalance[msg.sender] -= totalPricePaidSoFar;
-        addressesToShareholderShares[msg.sender] += totalSharesBoughtSoFar;
+        addressesToShares[msg.sender] += totalSharesBoughtSoFar;
     }
     
     function cancelOrder(bool isBuyOrder, uint256 priceIndex, uint256 index) public
@@ -231,30 +491,6 @@ contract Organization
             orderArray.length--;
         }
     }
-    
-    // Maybe only the UI should do this?
-    /*function getSharesBuyMarketPrice(uint256 amountOfShares) public view returns (uint256, uint256)
-    {
-        uint256 amountOfSharesCounted = 0;
-        uint256 totalPrice
-        
-        // If there are not that many shares for sale, return 0xFFFFFFF....
-        if (amountOfSharesCounted < amountOfShares)
-        {
-            return ~uint256(1);
-        }
-        
-        // If there are enough shares for sale, return the total price
-        else
-        {
-            
-        }
-    }
-    
-    function getSharesSellMarketPrice(uint256 amountOfShares) public view returns (uint256)
-    {
-        
-    }*/
     
     ////////////////////////////////////////////
     ////////////////////// Utility functions
