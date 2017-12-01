@@ -26,7 +26,7 @@ contract Organization// is ERC223
     
     ////////////////////////////////////////////
     ////////////////////// Constructor
-    function Organization(uint256 _totalShares, uint256 _minimumVotesPerMillionToPerformAction) public
+    function Organization(uint256 _totalShares, uint256 _minimumVotesPerThousandToPerformAction) public
     {
         // Grant initial shares to whoever deployed this contract
         addressesToShares[msg.sender] = _totalShares;
@@ -37,15 +37,15 @@ contract Organization// is ERC223
         availableOrganizationFunds += this.balance;
         
         // Set default settings
-        minimumVotesPerMillionToChangeMinimumVoteSettings = MILLION;
-        minimumVotesPerMillionToChangeFunctionRequirements = MILLION;
-        minimumVotesPerMillionToIncreaseShareGranularity = MILLION / 4;
-        minimumVotesPerMillionToGrantShares = MILLION;
-        minimumVotesPerMillionToDestroyShares = MILLION;
+        minimumVotesPerThousandToChangeMinimumVoteSettings = 1000;
+        minimumVotesPerThousandToChangeFunctionRequirements = 1000;
+        minimumVotesPerThousandToIncreaseShareGranularity = 1000 / 4;
+        minimumVotesPerThousandToGrantShares = 1000;
+        minimumVotesPerThousandToDestroyShares = 1000;
         defaultFunctionRequirements.active = true;
         defaultFunctionRequirements.minimumEther = 0;
         defaultFunctionRequirements.maximumEther = ~uint256(0);
-        defaultFunctionRequirements.votesPerMillionRequired = _minimumVotesPerMillionToPerformAction;
+        defaultFunctionRequirements.votesPerThousandRequired = _minimumVotesPerThousandToPerformAction;
         defaultFunctionRequirements.organizationRefundsTxFee = false;
     }
     
@@ -58,7 +58,6 @@ contract Organization// is ERC223
 	
     ////////////////////////////////////////////
     ////////////////////// Funds tracking
-    
     // All the funds in this corporation contract are accounted for
     // in these two variables, except for the funds locked inside buy orders
     mapping(address => uint256) public addressToBalance;
@@ -72,11 +71,11 @@ contract Organization// is ERC223
 	
     ////////////////////////////////////////////
     ////////////////////// Organization settings
-	uint256 minimumVotesPerMillionToChangeMinimumVoteSettings;
-	uint256 minimumVotesPerMillionToChangeFunctionRequirements;
-	uint256 minimumVotesPerMillionToIncreaseShareGranularity;
-    uint256 minimumVotesPerMillionToGrantShares;
-    uint256 minimumVotesPerMillionToDestroyShares;
+	uint256 minimumVotesPerThousandToChangeMinimumVoteSettings;
+	uint256 minimumVotesPerThousandToChangeFunctionRequirements;
+	uint256 minimumVotesPerThousandToIncreaseShareGranularity;
+    uint256 minimumVotesPerThousandToGrantShares;
+    uint256 minimumVotesPerThousandToDestroyShares;
 	
     ////////////////////////////////////////////
     ////////////////////// Share functions (ERC20 & ERC223 compatible)
@@ -178,7 +177,7 @@ contract Organization// is ERC223
         totalShares += amount;
         // Use safeMul in advance to protect against any future overflow.
         safeMul(MAX_ETHER, totalShares);
-        safeMul(MILLION, totalShares);
+        safeMul(1000, totalShares);
         addressesToShares[to] += amount;
         if (amount > 0)
         {
@@ -199,7 +198,7 @@ contract Organization// is ERC223
         // Using safeMul in advance to protect against any future overflow.
         totalShares = safeMul(totalShares, multiplier);
         safeMul(MAX_ETHER, totalShares);
-        safeMul(MILLION, totalShares);
+        safeMul(1000, totalShares);
         
         // Multiply every shareholder's individual share count.
         // We don't have to check for overflow here because totalShares
@@ -230,7 +229,7 @@ contract Organization// is ERC223
 	    // Requirements for function call
 		uint256 minimumEther;
 		uint256 maximumEther;
-		uint256 votesPerMillionRequired;
+		uint256 votesPerThousandRequired;
 		
 		// Additional
 		bool organizationRefundsTxFee;
@@ -299,7 +298,7 @@ contract Organization// is ERC223
         bool rejected;
         bool executed;
         string description;
-        uint256 votesPerMillionRequired;
+        uint256 votesPerThousandRequired;
         uint256 totalVotesCast;
         uint256 totalYesVotes;
         mapping(address => uint256) addressesToVotesCast;
@@ -336,7 +335,7 @@ contract Organization// is ERC223
                 proposal.addressesToVotesCast[msg.sender] += unusedVotes;
                 
                 // If there are enough no votes to permanently reject the proposal, reject it:
-                if ((proposal.totalVotesCast - proposal.totalYesVotes) >= (totalShares * proposal.votesPerMillionRequired) / MILLION)
+                if ((proposal.totalVotesCast - proposal.totalYesVotes) >= (totalShares * proposal.votesPerThousandRequired) / 1000)
                 {
                     unfinalizedPropalIndexes.remove(i);
                     proposal.rejected = true;
@@ -355,7 +354,7 @@ contract Organization// is ERC223
         Proposal storage proposal = proposals[proposalIndex];
         require(proposal.executed == false);
         require(proposal.rejected == false);
-        require(proposal.totalYesVotes >= (totalShares * proposal.votesPerMillionRequired) / MILLION);
+        require(proposal.totalYesVotes >= (totalShares * proposal.votesPerThousandRequired) / 1000);
         if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
         {
             _grantShares(address(proposal.param1), proposal.param2);
@@ -399,11 +398,11 @@ contract Organization// is ERC223
         }
         else if (proposal.proposalType == ProposalType.SET_GLOBAL_SETTINGS)
         {
-            if (proposal.param1 != MAX_UINT256) minimumVotesPerMillionToChangeMinimumVoteSettings = proposal.param1;
-            if (proposal.param2 != MAX_UINT256) minimumVotesPerMillionToChangeFunctionRequirements = proposal.param2;
-            if (proposal.param3 != MAX_UINT256) minimumVotesPerMillionToIncreaseShareGranularity = proposal.param3;
-            if (proposal.param4 != MAX_UINT256) minimumVotesPerMillionToGrantShares = proposal.param4;
-            if (proposal.param5 != MAX_UINT256) minimumVotesPerMillionToDestroyShares = proposal.param5;
+            if (proposal.param1 != MAX_UINT256) minimumVotesPerThousandToChangeMinimumVoteSettings = proposal.param1;
+            if (proposal.param2 != MAX_UINT256) minimumVotesPerThousandToChangeFunctionRequirements = proposal.param2;
+            if (proposal.param3 != MAX_UINT256) minimumVotesPerThousandToIncreaseShareGranularity = proposal.param3;
+            if (proposal.param4 != MAX_UINT256) minimumVotesPerThousandToGrantShares = proposal.param4;
+            if (proposal.param5 != MAX_UINT256) minimumVotesPerThousandToDestroyShares = proposal.param5;
         }
         else
         {
@@ -421,7 +420,7 @@ contract Organization// is ERC223
             param1: uint256(destination),
             param2: shares,
             description: description,
-            votesPerMillionRequired: minimumVotesPerMillionToGrantShares
+            votesPerThousandRequired: minimumVotesPerThousandToGrantShares
         }));
     }
     
@@ -432,7 +431,7 @@ contract Organization// is ERC223
             proposalType: ProposalType.INCREASE_SHARE_GRANULARITY,
             param1: multiplier,
             description: description,
-            votesPerMillionRequired: minimumVotesPerMillionToIncreaseShareGranularity
+            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity
         }));
     }
     
@@ -465,7 +464,7 @@ contract Organization// is ERC223
             param2: etherAmount,
             param3: methodId,
             param6: arguments,
-            votesPerMillionRequired: requirements.votesPerMillionRequired,
+            votesPerThousandRequired: requirements.votesPerThousandRequired,
             description: description
         }));
     }
@@ -602,6 +601,6 @@ contract Organization// is ERC223
         else return j;
     }
     uint256 constant MAX_UINT256 = ~uint256(0);
-    uint256 constant MAX_ETHER = (100 ether) * MILLION;
     uint256 constant MILLION = 10 ** 6;
+    uint256 constant MAX_ETHER = (100 ether) * MILLION;
 }
