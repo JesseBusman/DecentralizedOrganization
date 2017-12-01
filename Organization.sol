@@ -122,8 +122,10 @@ contract Organization// is ERC223
     function _grantShares(address to, uint256 amount) internal
     {
         totalShares += amount;
-        addressesToShares[to] += amount;
+        // Use safeMul in advance to protect against any future overflow.
         safeMul(MAX_ETHER, totalShares);
+        safeMul(MILLION, totalShares);
+        addressesToShares[to] += amount;
         if (amount > 0)
         {
             allShareholders.add(to);
@@ -140,12 +142,10 @@ contract Organization// is ERC223
         require(multiplier > 0);
         
         // Multiply the total amount of shares.
-        // Using safeMul protects against overflow.
+        // Using safeMul in advance to protect against any future overflow.
         totalShares = safeMul(totalShares, multiplier);
         safeMul(MAX_ETHER, totalShares);
-        
-        // totalShares * MILLION must always be smaller than MAX_UINT256
-        require(totalShares * MILLION < MAX_UINT256);
+        safeMul(MILLION, totalShares);
         
         // Multiply every shareholder's individual share count.
         // We don't have to check for overflow here because totalShares
