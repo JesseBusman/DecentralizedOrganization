@@ -25,6 +25,60 @@ contract Organization// is ERC223
     using SetLibrary for SetLibrary.Set;
     
     ////////////////////////////////////////////
+    ////////////////////// Constructor
+    function Organization(uint256 _totalShares, uint256 _minimumVotesPerMillionToPerformAction) public
+    {
+        // Grant initial shares
+        addressesToShares[msg.sender] = _totalShares;
+        totalShares = _totalShares;
+        allShareholders.add(msg.sender);
+        
+        // Absorb any existing balance
+        availableOrganizationFunds += this.balance;
+        
+        // Set default settings
+        minimumVotesPerMillionToChangeMinimumVoteSettings = MILLION;
+        minimumVotesPerMillionToChangeFunctionRequirements = MILLION;
+        minimumVotesPerMillionToIncreaseShareGranularity = MILLION / 4;
+        minimumVotesPerMillionToGrantShares = MILLION;
+        minimumVotesPerMillionToDestroyShares = MILLION;
+        defaultFunctionRequirements.active = true;
+        defaultFunctionRequirements.minimumEther = 0;
+        defaultFunctionRequirements.maximumEther = ~uint256(0);
+        defaultFunctionRequirements.votesPerMillionRequired = _minimumVotesPerMillionToPerformAction;
+        defaultFunctionRequirements.organizationRefundsTxFee = false;
+    }
+    
+    ////////////////////////////////////////////
+    /////////////////////// Fallback function
+    function() public payable
+    {
+        availableOrganizationFunds += msg.value;
+    }
+	
+    ////////////////////////////////////////////
+    ////////////////////// Funds tracking
+    
+    // All the funds in this corporation contract are accounted for
+    // in these two variables, except for the funds locked inside buy orders
+    mapping(address => uint256) public addressToBalance;
+    uint256 public availableOrganizationFunds;
+	
+    ////////////////////////////////////////////
+    ////////////////////// Organization events
+    event EtherReceived(address source, uint256 amount);
+    event ProposalSubmitted(uint256 index);
+    event ProposalExecuted(uint256 index);
+	
+    ////////////////////////////////////////////
+    ////////////////////// Organization settings
+	uint256 minimumVotesPerMillionToChangeMinimumVoteSettings;
+	uint256 minimumVotesPerMillionToChangeFunctionRequirements;
+	uint256 minimumVotesPerMillionToIncreaseShareGranularity;
+    uint256 minimumVotesPerMillionToGrantShares;
+    uint256 minimumVotesPerMillionToDestroyShares;
+	
+    ////////////////////////////////////////////
     ////////////////////// Share functions (ERC20 & ERC223 compatible)
     
     // ERC20 interface implentation:
@@ -157,20 +211,6 @@ contract Organization// is ERC223
     }
     
     ////////////////////////////////////////////
-    ////////////////////// Organization events
-    event EtherReceived(address source, uint256 amount);
-    event ProposalSubmitted(uint256 index);
-    event ProposalExecuted(uint256 index);
-	
-    ////////////////////////////////////////////
-    ////////////////////// Organization settings
-	uint256 minimumVotesPerMillionToChangeMinimumVoteSettings;
-	uint256 minimumVotesPerMillionToChangeFunctionRequirements;
-	uint256 minimumVotesPerMillionToIncreaseShareGranularity;
-    uint256 minimumVotesPerMillionToGrantShares;
-    uint256 minimumVotesPerMillionToDestroyShares;
-    
-    ////////////////////////////////////////////
     ////////////////////// Function requirements
     
     // When a CALL_FUNCTION Proposal is submitted,
@@ -203,14 +243,6 @@ contract Organization// is ERC223
 	
 	// A mapping of (contractAddress XOR methodId) to FunctionRequirements's
 	mapping(uint256 => FunctionRequirements[]) public contractFunctionRequirements;
-	
-    ////////////////////////////////////////////
-    ////////////////////// Funds tracking
-    
-    // All the funds in this corporation contract are accounted for
-    // in these two variables, except for the funds locked inside buy orders
-    mapping(address => uint256) public addressToBalance;
-    uint256 public availableOrganizationFunds;
     
     ////////////////////////////////////////////
     ////////////////////// Proposals
@@ -273,6 +305,7 @@ contract Organization// is ERC223
         mapping(address => uint256) addressesToVotesCast;
         mapping(address => uint256) addressesToYesVotesCast;
     }
+	
     Proposal[] public proposals;
     SetLibrary.Set private unfinalizedPropalIndexes;
     
@@ -446,37 +479,7 @@ contract Organization// is ERC223
     {
         //TODO
     }
-    
-    // Fallback function:
-    function() public payable
-    {
-        availableOrganizationFunds += msg.value;
-    }
-    
-    function Organization(uint256 _totalShares, uint256 _minimumVotesPerMillionToPerformAction) public
-    {
-        // Grant initial shares
-        addressesToShares[msg.sender] = _totalShares;
-        totalShares = _totalShares;
-        allShareholders.add(msg.sender);
-        
-        // Absorb any existing balance
-        availableOrganizationFunds += this.balance;
-        
-        // Set default settings
-        minimumVotesPerMillionToChangeFunctionRequirements = MILLION;
-        minimumVotesPerMillionToGrantShares = MILLION;
-        minimumVotesPerMillionToIncreaseShareGranularity = MILLION / 4;
-        minimumVotesPerMillionToChangeMinimumVoteSettings = MILLION;
-        minimumVotesPerMillionToDestroyShares = MILLION;
-        minimumVotesPerMillionToGrantShares = MILLION;
-        defaultFunctionRequirements.active = true;
-        defaultFunctionRequirements.minimumEther = 0;
-        defaultFunctionRequirements.maximumEther = ~uint256(0);
-        defaultFunctionRequirements.votesPerMillionRequired = _minimumVotesPerMillionToPerformAction;
-        defaultFunctionRequirements.organizationRefundsTxFee = false;
-    }
-
+	
     function withdraw(uint256 amountToWithdraw) external
     {
         require(addressToBalance[msg.sender] >= amountToWithdraw);
