@@ -28,12 +28,12 @@ contract Organization// is ERC223
     ////////////////////// Constructor
     function Organization(uint256 _totalShares, uint256 _minimumVotesPerMillionToPerformAction) public
     {
-        // Grant initial shares
+        // Grant initial shares to whoever deployed this contract
         addressesToShares[msg.sender] = _totalShares;
         totalShares = _totalShares;
         allShareholders.add(msg.sender);
         
-        // Absorb any existing balance
+        // Absorb any existing balance that was accidentally sent here
         availableOrganizationFunds += this.balance;
         
         // Set default settings
