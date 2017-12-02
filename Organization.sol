@@ -2,7 +2,7 @@
 
 pragma solidity ^0.4.18;
 
-import "https://github.com/JesseBusman/SoliditySet/blob/master/SetLibrary.sol";
+import "./SetLibrary.sol";
 
 /*contract ERC223
 {
@@ -81,28 +81,28 @@ contract Organization// is ERC223
     ////////////////////// Share functions (ERC20 & ERC223 compatible)
     
     // ERC20 interface implentation:
-    function totalSupply() constant returns (uint totalSupply)
+    function totalSupply() constant public returns (uint totalSupply)
     {
         return totalShares;
     }
-    function balanceOf(address _owner) constant returns (uint balance)
+    function balanceOf(address _owner) constant public returns (uint balance)
     {
         return addressesToShares[_owner];
     }
-    function transfer(address _to, uint _value) returns (bool success)
+    function transfer(address _to, uint _value) public returns (bool success)
     {
         _transferShares(msg.sender, _to, _value);
         return true;
     }
-    function transferFrom(address _from, address _to, uint _value) returns (bool success)
+    function transferFrom(address _from, address _to, uint _value) public returns (bool success)
     {
         revert();
     }
-    function approve(address _spender, uint _value) returns (bool success)
+    function approve(address _spender, uint _value) public returns (bool success)
     {
         revert();
     }
-    function allowance(address _owner, address _spender) constant returns (uint remaining)
+    function allowance(address _owner, address _spender) constant public returns (uint remaining)
     {
         revert();
     }
@@ -111,23 +111,23 @@ contract Organization// is ERC223
     event Approval(address indexed _owner, address indexed _spender, uint _value);
     
     // ERC223 interface implentation:
-    function name() constant returns (string _name)
+    function name() pure public returns (string _name)
     {
-        
+        return "";
     }
-    function symbol() constant returns (string _symbol)
+    function symbol() pure public returns (string _symbol)
     {
-        
+        return "";
     }
-    function decimals() constant returns (uint8 _decimals)
+    function decimals() pure public returns (uint8 _decimals)
     {
-        
+        return 0;
     }
-    function transfer(address _to, uint _value, bytes _data) returns (bool)
+    function transfer(address _to, uint _value, bytes /*_data*/) public returns (bool)
     {
-        
+        _transferShares(msg.sender, _to, _value);
     }
-    function tokenFallback(address _from, uint _value, bytes _data)
+    function tokenFallback(address _from, uint _value, bytes _data) public
     {
         // TODO organizationBalance and shareholderBalance's for tokens
     }
@@ -300,7 +300,7 @@ contract Organization// is ERC223
         string description;
         uint256 votesPerThousandRequired;
         uint256 totalVotesCast;
-        uint256 totalYesVotes;
+        uint256 totalYesVotesCast;
         mapping(address => uint256) addressesToVotesCast;
         mapping(address => uint256) addressesToYesVotesCast;
     }
@@ -331,11 +331,11 @@ contract Organization// is ERC223
                 uint256 unusedVotes = sharesAvailableToVoteWith - proposal.addressesToVotesCast[msg.sender];
                 
                 proposal.totalVotesCast += unusedVotes;
-                if (proposalVotes[i] == true) proposal.totalYesVotes += unusedVotes;
+                if (proposalVotes[i] == true) proposal.totalYesVotesCast += unusedVotes;
                 proposal.addressesToVotesCast[msg.sender] += unusedVotes;
                 
                 // If there are enough no votes to permanently reject the proposal, reject it:
-                if ((proposal.totalVotesCast - proposal.totalYesVotes) >= (totalShares * proposal.votesPerThousandRequired) / 1000)
+                if ((proposal.totalVotesCast - proposal.totalYesVotesCast) >= (totalShares * proposal.votesPerThousandRequired) / 1000)
                 {
                     unfinalizedPropalIndexes.remove(i);
                     proposal.rejected = true;
@@ -354,7 +354,7 @@ contract Organization// is ERC223
         Proposal storage proposal = proposals[proposalIndex];
         require(proposal.executed == false);
         require(proposal.rejected == false);
-        require(proposal.totalYesVotes >= (totalShares * proposal.votesPerThousandRequired) / 1000);
+        require(proposal.totalYesVotesCast >= (totalShares * proposal.votesPerThousandRequired) / 1000);
         if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
         {
             _grantShares(address(proposal.param1), proposal.param2);
@@ -420,7 +420,16 @@ contract Organization// is ERC223
             param1: uint256(destination),
             param2: shares,
             description: description,
-            votesPerThousandRequired: minimumVotesPerThousandToGrantShares
+            votesPerThousandRequired: minimumVotesPerThousandToGrantShares,
+            
+            param3: 0,
+            param4: 0,
+            param5: 0,
+            param6: "",
+            rejected: false,
+            executed: false,
+            totalVotesCast: 0,
+            totalYesVotesCast: 0
         }));
     }
     
@@ -431,7 +440,17 @@ contract Organization// is ERC223
             proposalType: ProposalType.INCREASE_SHARE_GRANULARITY,
             param1: multiplier,
             description: description,
-            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity
+            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity,
+            
+            param2: 0,
+            param3: 0,
+            param4: 0,
+            param5: 0,
+            param6: "",
+            rejected: false,
+            executed: false,
+            totalVotesCast: 0,
+            totalYesVotesCast: 0
         }));
     }
     
@@ -465,7 +484,14 @@ contract Organization// is ERC223
             param3: methodId,
             param6: arguments,
             votesPerThousandRequired: requirements.votesPerThousandRequired,
-            description: description
+            description: description,
+            
+            param4: 0,
+            param5: 0,
+            rejected: false,
+            executed: false,
+            totalVotesCast: 0,
+            totalYesVotesCast: 0
         }));
     }
     
