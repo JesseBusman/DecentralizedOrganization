@@ -1,26 +1,55 @@
 // This contract is under construction! Do not use yet!
 
-pragma solidity ^0.4.18;
+pragma solidity ^0.4.19;
 
 import "./SetLibrary.sol";
 
-/*contract ERC223
+contract ERC223
 {
     //uint public totalSupply;
-    function balanceOf(address who) constant returns (uint);
+    function balanceOf(address who) public constant returns (uint);
     
-    function name() constant returns (string _name);
-    function symbol() constant returns (string _symbol);
-    function decimals() constant returns (uint8 _decimals);
-    function totalSupply() constant returns (uint256 _supply);
+    function name() public constant returns (string _name);
+    function symbol() public constant returns (string _symbol);
+    function decimals() public constant returns (uint8 _decimals);
+    function totalSupply() public constant returns (uint256 _supply);
     
-    function transfer(address to, uint value) returns (bool ok);
-    function transfer(address to, uint value, bytes data) returns (bool ok);
-    function transfer(address to, uint value, bytes data, string custom_fallback) returns (bool ok);
+    function transfer(address to, uint value) public returns (bool ok);
+    function transfer(address to, uint value, bytes data) public returns (bool ok);
+    function transfer(address to, uint value, bytes data, string custom_fallback) public returns (bool ok);
     event Transfer(address indexed from, address indexed to, uint value, bytes indexed data);
-}*/
+}
 
-contract Organization// is ERC223
+contract ContractReceiver
+{
+    struct TKN
+    {
+        address sender;
+        uint value;
+        bytes data;
+        bytes4 sig;
+    }
+    
+    function tokenFallback(address _from, uint _value, bytes _data) public
+    {
+        TKN memory tkn;
+        tkn.sender = _from;
+        tkn.value = _value;
+        tkn.data = _data;
+        uint32 u = uint32(_data[3]) + (uint32(_data[2]) << 8) + (uint32(_data[1]) << 16) + (uint32(_data[0]) << 24);
+        tkn.sig = bytes4(u);
+        
+        /* tkn variable is analogue of msg variable of Ether transaction
+        *  tkn.sender is person who initiated this token transaction   (analogue of msg.sender)
+        *  tkn.value the number of tokens that were sent   (analogue of msg.value)
+        *  tkn.data is data of token transaction   (analogue of msg.data)
+        *  tkn.sig is 4 bytes signature of function
+        *  if data of token transaction is a function execution
+        */
+    }
+}
+
+contract Organization is ERC223
 {
     using SetLibrary for SetLibrary.Set;
     
@@ -28,6 +57,10 @@ contract Organization// is ERC223
     ////////////////////// Constructor
     function Organization(uint256 _totalShares, uint256 _minimumVotesPerThousandToPerformAction) public
     {
+        // Verify sanity of constructor arguments
+        require(_totalShares > 0);
+        require(_minimumVotesPerThousandToPerformAction <= 1000);
+        
         // Grant initial shares to whoever deployed this contract
         addressesToShares[msg.sender] = _totalShares;
         totalShares = _totalShares;
@@ -80,58 +113,100 @@ contract Organization// is ERC223
     ////////////////////////////////////////////
     ////////////////////// Share functions (ERC20 & ERC223 compatible)
     
-    // ERC20 interface implentation:
-    function totalSupply() constant public returns (uint totalSupply)
+    function totalSupply() public view returns (uint256 _supply)
     {
         return totalShares;
     }
-    function balanceOf(address _owner) constant public returns (uint balance)
+    
+    function balanceOf(address who) public view returns (uint)
     {
-        return addressesToShares[_owner];
+        return addressesToShares[who];
+    }
+    
+    function name() public constant returns (string _name)
+    {
+        return "Share"; // TODO
+    }
+    function symbol() public constant returns (string _symbol)
+    {
+        return "L0L"; // TODO
+    }
+    function decimals() public constant returns (uint8 _decimals)
+    {
+        return 0; // TODO
+    }
+    
+    function transfer(address _to, uint _value, bytes _data, string _custom_fallback) public returns (bool success)
+    {
+        if (isContract(_to))
+        {
+            _transferShares(msg.sender, _to, _value);
+            ContractReceiver receiver = ContractReceiver(_to);
+            receiver.call.value(0)(bytes4(keccak256(_custom_fallback)), msg.sender, _value, _data);
+            Transfer(msg.sender, _to, _value, _data);
+            return true;
+        }
+        else
+        {
+            return transferToAddress(_to, _value, _data);
+        }
+    }
+    
+    // Function that is called when a user or another contract wants to transfer funds .
+    function transfer(address _to, uint _value, bytes _data) public returns (bool success)
+    {
+        if (isContract(_to))
+        {
+            return transferToContract(_to, _value, _data);
+        }
+        else
+        {
+            return transferToAddress(_to, _value, _data);
+        }
     }
     function transfer(address _to, uint _value) public returns (bool success)
     {
+        if (isContract(_to))
+        {
+            return transferToContract(_to, _value, "");
+        }
+        else
+        {
+            return transferToAddress(_to, _value, "");
+        }
+    }
+    
+    function isContract(address _addr) private view returns (bool is_contract)
+    {
+        // If an address has a non-zero EXTCODESIZE, it is considered a contract.
+        uint codeSize;
+        assembly
+        {
+            codeSize := extcodesize(_addr)
+        }
+        return codeSize != 0;
+    }
+    
+    //function that is called when transaction target is an address
+    function transferToAddress(address _to, uint _value, bytes _data) private returns (bool success)
+    {
         _transferShares(msg.sender, _to, _value);
+        Transfer(msg.sender, _to, _value, _data);
         return true;
     }
-    function transferFrom(address _from, address _to, uint _value) public returns (bool success)
-    {
-        revert();
-    }
-    function approve(address _spender, uint _value) public returns (bool success)
-    {
-        revert();
-    }
-    function allowance(address _owner, address _spender) constant public returns (uint remaining)
-    {
-        revert();
-    }
-    event Transfer(address indexed _from, address indexed _to, uint _value);
-    event Transfer(address indexed _from, address indexed _to, uint256 indexed _value, bytes _data);
-    event Approval(address indexed _owner, address indexed _spender, uint _value);
     
-    // ERC223 interface implentation:
-    function name() pure public returns (string _name)
-    {
-        return "";
-    }
-    function symbol() pure public returns (string _symbol)
-    {
-        return "";
-    }
-    function decimals() pure public returns (uint8 _decimals)
-    {
-        return 0;
-    }
-    function transfer(address _to, uint _value, bytes /*_data*/) public returns (bool)
+    //function that is called when transaction target is a contract
+    function transferToContract(address _to, uint _value, bytes _data) private returns (bool success)
     {
         _transferShares(msg.sender, _to, _value);
+        ContractReceiver receiver = ContractReceiver(_to);
+        receiver.tokenFallback(msg.sender, _value, _data);
+        Transfer(msg.sender, _to, _value, _data);
+        return true;
     }
-    function tokenFallback(address _from, uint _value, bytes _data) public
-    {
-        // TODO organizationBalance and shareholderBalance's for tokens
-    }
-
+    
+    event Transfer(address indexed from, address indexed to, uint value, bytes indexed data);
+    
     ////////////////////////////////////////////
     ////////////////////// Share state variables
     
@@ -170,7 +245,7 @@ contract Organization// is ERC223
         }
         
         // Trigger event
-        Transfer(from, to, amount);
+        Transfer(from, to, amount, "");
     }
     function _grantShares(address to, uint256 amount) internal
     {
@@ -293,6 +368,7 @@ contract Organization// is ERC223
         uint256 param4;
         uint256 param5;
         bytes param6;
+        string param7;
         
         // Voting status
         bool rejected;
@@ -378,8 +454,9 @@ contract Organization// is ERC223
             {
                 functionRequirements = contractFunctionRequirements[proposal.param1 ^ proposal.param2][proposal.param5];
             }
-            
-            address(proposal.param1).call();
+
+            address(proposal.param1).call.value(0)(proposal.param6);
+            //receiver.call.value(0)(bytes4(keccak256(_custom_fallback)), msg.sender, _value, _data);
         }
         else if (proposal.proposalType == ProposalType.REWARD_SHAREHOLDERS)
         {
@@ -426,6 +503,7 @@ contract Organization// is ERC223
             param4: 0,
             param5: 0,
             param6: "",
+            param7: "",
             rejected: false,
             executed: false,
             totalVotesCast: 0,
@@ -447,6 +525,7 @@ contract Organization// is ERC223
             param4: 0,
             param5: 0,
             param6: "",
+            param7: "",
             rejected: false,
             executed: false,
             totalVotesCast: 0,
@@ -454,22 +533,40 @@ contract Organization// is ERC223
         }));
     }
     
-    function proposeToCallFunction(address contractAddress, uint256 etherAmount, uint256 methodId, bytes arguments, string description) public
+    function proposeToCallFunction(address contractAddress, uint256 etherAmount, string functionSignature, bytes data, string description) public
     {
+        // Make sure that the method ID in data matches the function signature.
+        bytes4 methodId = 0x00000000;
+        if (data.length == 0 && bytes(functionSignature).length == 0)
+        {
+            // Calling the fallback function
+        }
+        else
+        {
+            // Calling a non-fallback function
+            methodId |= bytes4(data[0]) << 24;
+            methodId |= bytes4(data[1]) << 16;
+            methodId |= bytes4(data[2]) <<  8;
+            methodId |= bytes4(data[3]) <<  0;
+            assert(methodId == bytes4(keccak256(functionSignature)));
+        }
+        
         FunctionRequirements storage requirements = defaultFunctionRequirements;
         bool requireMatchingCustomRequirements = false;
         bool foundMatchingCustomRequirements = false;
         
-        for (uint i=0; i<contractFunctionRequirements[uint256(contractAddress) ^ methodId].length; i++)
+        uint256 contractAddressXorMethodId = uint256(contractAddress) ^ uint256(methodId);
+        
+        for (uint i=0; i<contractFunctionRequirements[contractAddressXorMethodId].length; i++)
         {
-            if (contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].active)
+            if (contractFunctionRequirements[contractAddressXorMethodId][i].active)
             {
                 requireMatchingCustomRequirements = true;
-                if (etherAmount >= contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].minimumEther &&
-                    etherAmount <= contractFunctionRequirements[uint256(contractAddress) ^ methodId][i].maximumEther)
+                if (etherAmount >= contractFunctionRequirements[contractAddressXorMethodId][i].minimumEther &&
+                    etherAmount <= contractFunctionRequirements[contractAddressXorMethodId][i].maximumEther)
                 {
                     foundMatchingCustomRequirements = true;
-                    requirements = contractFunctionRequirements[uint256(contractAddress) ^ methodId][i];
+                    requirements = contractFunctionRequirements[contractAddressXorMethodId][i];
                 }
             }
         }
@@ -481,11 +578,12 @@ contract Organization// is ERC223
             proposalType: ProposalType.CALL_FUNCTION,
             param1: uint256(contractAddress),
             param2: etherAmount,
-            param3: methodId,
-            param6: arguments,
+            param6: data,
+            param7: functionSignature,
             votesPerThousandRequired: requirements.votesPerThousandRequired,
             description: description,
             
+            param3: 0,
             param4: 0,
             param5: 0,
             rejected: false,
@@ -497,10 +595,10 @@ contract Organization// is ERC223
     
     function proposeToTransferEther(address destinationAddress, uint256 etherAmount, string description) external
     {
-        proposeToCallFunction(destinationAddress, etherAmount, 0, "", description);
+        proposeToCallFunction(destinationAddress, etherAmount, "", "", description);
     }
     
-    function proposeToTransferTokens(address tokenContract, uint256 tokensAmount, string description) external
+    function proposeToTransferTokens(address tokenContract, address destination, uint256 tokenAmount, string description) external
     {
         //TODO
     }
