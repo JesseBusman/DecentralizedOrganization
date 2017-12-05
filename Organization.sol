@@ -31,31 +31,7 @@ contract ERC223 is ERC20Basic
 
 contract ContractReceiver
 {
-    struct TKN
-    {
-        address sender;
-        uint value;
-        bytes data;
-        bytes4 sig;
-    }
-    
-    function tokenFallback(address _from, uint _value, bytes _data) public
-    {
-        TKN memory tkn;
-        tkn.sender = _from;
-        tkn.value = _value;
-        tkn.data = _data;
-        uint32 u = uint32(_data[3]) + (uint32(_data[2]) << 8) + (uint32(_data[1]) << 16) + (uint32(_data[0]) << 24);
-        tkn.sig = bytes4(u);
-        
-        /* tkn variable is analogue of msg variable of Ether transaction
-        *  tkn.sender is person who initiated this token transaction   (analogue of msg.sender)
-        *  tkn.value the number of tokens that were sent   (analogue of msg.value)
-        *  tkn.data is data of token transaction   (analogue of msg.data)
-        *  tkn.sig is 4 bytes signature of function
-        *  if data of token transaction is a function execution
-        */
-    }
+    function tokenFallback(address _from, uint _value, bytes _data) public;
 }
 
 contract Organization is ERC223
@@ -99,14 +75,19 @@ contract Organization is ERC223
     function() public payable
     {
         availableOrganizationFunds += msg.value;
+        fundSources[msg.sender] += msg.value;
     }
 	
     ////////////////////////////////////////////
     ////////////////////// Funds tracking
-    // All the funds in this corporation contract are accounted for
-    // in these two variables, except for the funds locked inside buy orders
+    // All the funds in this organization contract are accounted for
+    // in these two variables.
     mapping(address => uint256) public addressToBalance;
     uint256 public availableOrganizationFunds;
+	
+	// This mapping keeps track of the sources of all the funds this
+	// organization has ever received.
+	mapping(address => uint256) public fundSources;
 	
     ////////////////////////////////////////////
     ////////////////////// Organization events
@@ -311,9 +292,7 @@ contract Organization is ERC223
 	{
 	    // Metadata
 		bool active;
-	    address contractAddress;
-	    uint32 methodId;
-	    
+        
 	    // Requirements for function call
 		uint256 minimumEther;
 		uint256 maximumEther;
@@ -363,7 +342,10 @@ contract Organization is ERC223
         
         SET_FUNCTION_RESTRICTION,
         // param1: the contract address XOR method ID
-        // param2: minimum votes required
+        // param2[bytes  3.. 0]: minimum votes required
+        // param2[bytes  7.. 4]: contractFunctionRequirements index to write to
+        // param2[bytes 11.. 8]: active status
+        // param2[bytes 15..12]: organization refunds tx fee
         // param3: minimum ether to send
         // param4: maximum ether to send
         
@@ -379,6 +361,7 @@ contract Organization is ERC223
     {
         VOTING,
         REJECTED,
+        EXPIRED,
         EXECUTED
     }
     struct Proposal
@@ -398,6 +381,7 @@ contract Organization is ERC223
         uint256 timestampProposed;
         uint256 timestampExpired;
         uint256 sharesLocked;
+        bool organizationRefundsTxFee;
     }
     struct ProposalVotingStatus
     {
@@ -415,27 +399,16 @@ contract Organization is ERC223
     
     SetLibrary.Set private unfinalizedPropalIndexes;
     
-    function _createProposal(
+    function _createProposal1(
         ProposalType proposalType,
         uint256 param1,
         uint256 param2,
         uint256 param3,
         uint256 param4,
         bytes param5,
-        string param6,
-        
-        // Constant metadata
-        string description,
-        uint256 maximumDurationTime,
-
-        // Voting status
-        uint256 votesPerThousandRequired
+        string param6
     ) internal
     {
-        uint256 sharesLocked = (totalShares * sharesPerThousandLockedToSubmitProposal) / 1000;
-        require(addressesToShares[msg.sender] >= sharesLocked);
-        addressesToShares[msg.sender] -= sharesLocked;
-        
         unfinalizedPropalIndexes.add(proposals.length);
         proposals.push(Proposal({
             proposalType: proposalType,
@@ -446,12 +419,29 @@ contract Organization is ERC223
             param5: param5,
             param6: param6
         }));
+    }
+    
+    function _createProposal2(
+        // Constant metadata
+        string description,
+        uint256 maximumDurationTime,
+        bool organizationRefundsTxFee,
+
+        // Voting status
+        uint256 votesPerThousandRequired
+    ) internal
+    {
+        uint256 sharesLocked = (totalShares * sharesPerThousandLockedToSubmitProposal) / 1000;
+        require(addressesToShares[msg.sender] >= sharesLocked);
+        addressesToShares[msg.sender] -= sharesLocked;
+        
         proposalMetadatas.push(ProposalMetadata({
             description: description,
             proposer: msg.sender,
             timestampProposed: block.timestamp,
             timestampExpired: block.timestamp + maximumDurationTime,
-            sharesLocked: sharesLocked
+            sharesLocked: sharesLocked,
+            organizationRefundsTxFee: organizationRefundsTxFee
         }));
         proposalVotingStatuses.push(ProposalVotingStatus({
             status: ProposalStatus.VOTING,
@@ -460,9 +450,20 @@ contract Organization is ERC223
             totalYesVotesCast: 0
         }));
     }
+    
+    function cancelExpiredProposal(uint256 proposalIndex) external
+    {
+        require(block.timestamp >= proposalMetadatas[proposalIndex].timestampExpired);
+        
+        proposalVotingStatuses[proposalIndex].status = ProposalStatus.EXPIRED;
+        unfinalizedPropalIndexes.remove(proposalIndex);
+        addressesToShares[proposalMetadatas[proposalIndex].proposer] += proposalMetadatas[proposalIndex].sharesLocked;
+    }
+    
     function _rejectProposal(uint256 proposalIndex) internal
     {
         proposalVotingStatuses[proposalIndex].status = ProposalStatus.REJECTED;
+        unfinalizedPropalIndexes.remove(proposalIndex);
         addressesToShares[proposalMetadatas[proposalIndex].proposer] += proposalMetadatas[proposalIndex].sharesLocked;
     }
     
@@ -474,9 +475,10 @@ contract Organization is ERC223
         
         for (uint i=0; i<proposalIndexes.length; i++)
         {
-            Proposal storage proposal = proposals[proposalIndexes[i]];
-            ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndexes[i]];
-            ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndexes[i]];
+            uint256 proposalIndex = proposalIndexes[i];
+            //Proposal storage proposal = proposals[proposalIndex];
+            //ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
+            ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndex];
             
             // If the proposal is already finalized, skip it.
             // TODO: maybe we should allow people to vote after a proposal is finalized.
@@ -504,11 +506,6 @@ contract Organization is ERC223
         }
     }
     
-    function executeProposal(uint256 proposalIndex) external
-    {
-        _executeProposal(proposalIndex);
-    }
-    
     function _setGlobalSettingsFromPackedValues(bytes32 packedValues) private
     {
             bytes2 part1 = bytes2(packedValues <<  0);
@@ -524,8 +521,29 @@ contract Organization is ERC223
             if (part5 != 0xFFFF) minimumVotesPerThousandToDestroyShares = uint16(part5);
             if (part6 != 0xFFFF) sharesPerThousandLockedToSubmitProposal = uint16(part6);
     }
-
-    function _executeProposal(uint256 proposalIndex) internal
+    
+    function _rewardShareholdersEther(uint256 totalReward) internal
+    {
+        require(availableOrganizationFunds >= totalReward);
+        availableOrganizationFunds -= totalReward;
+        uint256 totalRewarded = 0;
+        for (uint256 i=0; i<allShareholders.values.length; i++)
+        {
+            address shareholder = address(allShareholders.values[i]);
+            uint256 rewardForCurrentShareholder = totalReward * addressesToShares[shareholder] / totalShares;
+            addressToBalance[shareholder] += rewardForCurrentShareholder;
+            totalRewarded += rewardForCurrentShareholder;
+        }
+        
+        // Sanity check
+        assert(totalRewarded <= totalReward);
+        
+        // If the divisions had a remainder, put it back into the organizaition funds.
+        uint256 remainder = totalReward - totalRewarded;
+        availableOrganizationFunds += remainder;
+    }
+    
+    function executeProposal(uint256 proposalIndex) public
     {
         Proposal storage proposal = proposals[proposalIndex];
         ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
@@ -533,7 +551,9 @@ contract Organization is ERC223
         require(proposalVotingStatus.status == ProposalStatus.VOTING);
         require(proposalVotingStatus.totalYesVotesCast >= (totalShares * proposalVotingStatus.votesPerThousandRequired) / 1000);
         proposalVotingStatus.status = ProposalStatus.EXECUTED;
+        unfinalizedPropalIndexes.remove(proposalIndex);
         addressesToShares[proposalMetadata.proposer] += proposalMetadata.sharesLocked;
+        uint256 gasLeftBeforeExecuting = msg.gas;
         if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
         {
             _grantShares(address(proposal.param1), proposal.param2);
@@ -553,41 +573,31 @@ contract Organization is ERC223
         }
         else if (proposal.proposalType == ProposalType.REWARD_SHAREHOLDERS_ETHER)
         {
-            uint256 totalReward = proposal.param1;
-            require(availableOrganizationFunds >= totalReward);
-            availableOrganizationFunds -= totalReward;
-            uint256 totalRewarded = 0;
-            for (uint256 i=0; i<allShareholders.values.length; i++)
-            {
-                address shareholder = address(allShareholders.values[i]);
-                uint256 rewardForCurrentShareholder = totalReward * addressesToShares[shareholder] / totalShares;
-                addressToBalance[shareholder] += rewardForCurrentShareholder;
-                totalRewarded += rewardForCurrentShareholder;
-            }
-            
-            // Sanity check
-            assert(totalRewarded <= totalReward);
-            
-            // If the divisions had a remainder, put it back into the organizaition funds.
-            uint256 remainder = totalReward - totalRewarded;
-            availableOrganizationFunds += remainder;
+            _rewardShareholdersEther(proposal.param1);
         }
         else if (proposal.proposalType == ProposalType.SET_FUNCTION_RESTRICTION)
         {
-            FunctionRequirements storage functionRequirements;
-            if (proposal.param1 == 0)
+            uint256 minimumVotesRequired = (proposal.param2 >> 0) & 0xFFFFFFFF;
+            uint256 indexToWriteTo = (proposal.param2 >> 32) & 0xFFFFFFFF;
+            bool activeStatus = ((proposal.param2 >> 64) & 0xFFFFFFFF) != 0;
+            bool organizationRefundsTxFee = ((proposal.param2 >> 96) & 0xFFFFFFFF) != 0;
+            uint256 minimumEther = proposal.param3;
+            uint256 maximumEther = proposal.param4;
+            
+            FunctionRequirements[] storage contractFunctionRequirementses = contractFunctionRequirements[proposal.param1];
+            
+            if (indexToWriteTo == contractFunctionRequirementses.length)
             {
-                functionRequirements = defaultFunctionRequirements;
+                contractFunctionRequirementses.length++;
             }
-            else
-            {
-                uint256 minimumEther = proposal.param3;
-                uint256 maximumEther = proposal.param4;
-                //functionRequirements = contractFunctionRequirements[proposal.param1 ^ proposal.param2];
-            }
-            functionRequirements.minimumVotesRequired = proposal.param2;
-            functionRequirements.minimumEther = proposal.param4;
-            functionRequirements.maximumEther = proposal.param5;
+            
+            require(indexToWriteTo < contractFunctionRequirementses.length);
+            
+            contractFunctionRequirementses[indexToWriteTo].votesPerThousandRequired = minimumVotesRequired;
+            contractFunctionRequirementses[indexToWriteTo].active = activeStatus;
+            contractFunctionRequirementses[indexToWriteTo].organizationRefundsTxFee = organizationRefundsTxFee;
+            contractFunctionRequirementses[indexToWriteTo].minimumEther = minimumEther;
+            contractFunctionRequirementses[indexToWriteTo].maximumEther = maximumEther;
         }
         else if (proposal.proposalType == ProposalType.SET_GLOBAL_SETTINGS)
         {
@@ -597,18 +607,17 @@ contract Organization is ERC223
         {
             revert();
         }
-        unfinalizedPropalIndexes.remove(proposalIndex);
+        if (proposalMetadata.organizationRefundsTxFee)
+        {
+            uint256 gasConsumed = msg.gas - gasLeftBeforeExecuting;
+            msg.sender.transfer(gasConsumed * tx.gasprice);
+        }
     }
     
     function proposeToGrantNewShares(address destination, uint256 shares, string description, uint256 maximumDurationTime) external
     {
-        _createProposal({
+        _createProposal1({
             proposalType: ProposalType.GRANT_NEW_SHARES,
-            votesPerThousandRequired: minimumVotesPerThousandToGrantShares,
-            
-            description: description,
-            maximumDurationTime: maximumDurationTime,
-            
             param1: uint256(destination),
             param2: shares,
             param3: 0,
@@ -616,17 +625,18 @@ contract Organization is ERC223
             param5: "",
             param6: ""
         });
+        _createProposal2({
+            votesPerThousandRequired: minimumVotesPerThousandToGrantShares,
+            description: description,
+            maximumDurationTime: maximumDurationTime,
+            organizationRefundsTxFee: false
+        });
     }
     
     function proposeToIncreaseShareGranularity(uint256 multiplier, string description, uint256 maximumDurationTime) external
     {
-        _createProposal({
+        _createProposal1({
             proposalType: ProposalType.INCREASE_SHARE_GRANULARITY,
-            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity,
-            
-            description: description,
-            maximumDurationTime: maximumDurationTime,
-            
             param1: multiplier,
             param2: 0,
             param3: 0,
@@ -634,9 +644,15 @@ contract Organization is ERC223
             param5: "",
             param6: ""
         });
+        _createProposal2({
+            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity,
+            description: description,
+            maximumDurationTime: maximumDurationTime,
+            organizationRefundsTxFee: false
+        });
     }
     
-    function _getContractFunctionVotesPerThousandRequired(uint256 contractAddressXorMethodId, uint256 etherAmount) private returns (uint256 votesPerThousandRequired)
+    function _getContractFunctionVotesPerThousandRequired(uint256 contractAddressXorMethodId, uint256 etherAmount) private view returns (uint256 votesPerThousandRequired)
     {
         FunctionRequirements storage requirements = defaultFunctionRequirements;
         bool requireMatchingCustomRequirements = false;
@@ -652,11 +668,13 @@ contract Organization is ERC223
                 {
                     foundMatchingCustomRequirements = true;
                     requirements = contractFunctionRequirements[contractAddressXorMethodId][i];
+                    return requirements.votesPerThousandRequired;
                 }
             }
         }
         
-        require(requireMatchingCustomRequirements == false || foundMatchingCustomRequirements == true);
+        revert();
+        //require(requireMatchingCustomRequirements == false || foundMatchingCustomRequirements == true);
     }
     
     function proposeToCallFunction(
@@ -665,7 +683,8 @@ contract Organization is ERC223
         string functionSignature,
         bytes arguments,
         string description,
-        uint256 maximumDurationTime
+        uint256 maximumDurationTime,
+        bool organizationRefundsTxFee
     ) public
     {
         uint256 methodId;
@@ -684,17 +703,19 @@ contract Organization is ERC223
         
         uint256 votesPerThousandRequired = _getContractFunctionVotesPerThousandRequired(uint256(contractAddress) ^ methodId, etherAmount);
         
-        _createProposal({
+        _createProposal1({
             proposalType: ProposalType.CALL_FUNCTION,
             param1: uint256(contractAddress),
             param2: etherAmount,
             param3: 0,
             param4: 0,
             param5: arguments,
-            param6: functionSignature,
-            
+            param6: functionSignature
+        });
+        _createProposal2({
             description: description,
             maximumDurationTime: maximumDurationTime,
+            organizationRefundsTxFee: organizationRefundsTxFee,
             
             votesPerThousandRequired: votesPerThousandRequired
         });
@@ -702,10 +723,10 @@ contract Organization is ERC223
     
     function proposeToTransferEther(address destination, uint256 etherAmount, string description, uint256 maximumDurationTime) external
     {
-        proposeToCallFunction(destination, etherAmount, "", "", description, maximumDurationTime);
+        proposeToCallFunction(destination, etherAmount, "", "", description, maximumDurationTime, false);
     }
     
-    function concat(address addr, uint256 integer) private constant returns(bytes memory)
+    function concat(address addr, uint256 integer) private pure returns(bytes memory)
     {
         bytes memory ret = new bytes(64);
         bytes32 addrBytes = bytes32(addr);
@@ -720,7 +741,7 @@ contract Organization is ERC223
     
     function proposeToTransferTokens(address tokenContractAddress, address destination, uint256 tokenAmount, string description, uint256 maximumDurationTime) external
     {
-        proposeToCallFunction(tokenContractAddress, 0, "transfer(address,uint256)", concat(destination, tokenAmount), description, maximumDurationTime);
+        proposeToCallFunction(tokenContractAddress, 0, "transfer(address,uint256)", concat(destination, tokenAmount), description, maximumDurationTime, false);
     }
 	
     function withdraw(uint256 amountToWithdraw) external
