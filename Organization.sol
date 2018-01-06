@@ -313,7 +313,7 @@ contract Organization is ERC223
     ////////////////////////////////////////////
     ////////////////////// Proposals
     
-    enum ProposalType
+    enum ActionType
     {
         __NONE,
         
@@ -349,13 +349,15 @@ contract Organization is ERC223
         // param3: minimum ether to send
         // param4: maximum ether to send
         
-        SET_GLOBAL_SETTINGS
+        SET_GLOBAL_SETTINGS,
     	// param1[bytes 31..30]: minimumVotesToChangeMinimumVoteSettings      (if equal to 0xFFFF, keep the current value)
     	// param1[bytes 29..28]: minimumVotesToChangeFunctionRequirements     (if equal to 0xFFFF, keep the current value)
     	// param1[bytes 27..26]: minimumVotesToIncreaseShareGranularity       (if equal to 0xFFFF, keep the current value)
         // param1[bytes 25..24]: minimumVotesToGrantShares                    (if equal to 0xFFFF, keep the current value)
         // param1[bytes 23..22]: minimumVotesToDestroyShares                  (if equal to 0xFFFF, keep the current value)
         // param1[bytes 21..20]: minimumLockedSharesPerThousandToSubmitProposal (if equal to 0xFFFF, keep the current value)
+        
+        MULTIPLE_ACTIONS
     }
     enum ProposalStatus
     {
@@ -364,9 +366,9 @@ contract Organization is ERC223
         EXPIRED,
         EXECUTED
     }
-    struct Proposal
+    struct Action
     {
-        ProposalType proposalType;
+        ActionType actionType;
         uint256 param1;
         uint256 param2;
         uint256 param3;
@@ -393,14 +395,16 @@ contract Organization is ERC223
         mapping(address => uint256) addressesToYesVotesCast;
     }
 	
-    Proposal[] public proposals;
+	mapping(uint256 => Action[]) public multipleActionProposalIndexToActions;
+	
+    Action[] public proposalActions;
     ProposalMetadata[] public proposalMetadatas;
     ProposalVotingStatus[] public proposalVotingStatuses;
     
     SetLibrary.Set private unfinalizedPropalIndexes;
     
     function _createProposal1(
-        ProposalType proposalType,
+        ActionType actionType,
         uint256 param1,
         uint256 param2,
         uint256 param3,
@@ -409,9 +413,9 @@ contract Organization is ERC223
         string param6
     ) internal
     {
-        unfinalizedPropalIndexes.add(proposals.length);
-        proposals.push(Proposal({
-            proposalType: proposalType,
+        unfinalizedPropalIndexes.add(proposalActions.length);
+        proposalActions.push(Action({
+            actionType: actionType,
             param1: param1,
             param2: param2,
             param3: param3,
@@ -543,48 +547,47 @@ contract Organization is ERC223
         availableOrganizationFunds += remainder;
     }
     
-    function executeProposal(uint256 proposalIndex) public
+    function _executeProposal(Action storage action, uint256 proposalIndex) internal
     {
-        Proposal storage proposal = proposals[proposalIndex];
-        ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
-        ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndex];
-        require(proposalVotingStatus.status == ProposalStatus.VOTING);
-        require(proposalVotingStatus.totalYesVotesCast >= (totalShares * proposalVotingStatus.votesPerThousandRequired) / 1000);
-        proposalVotingStatus.status = ProposalStatus.EXECUTED;
-        unfinalizedPropalIndexes.remove(proposalIndex);
-        addressesToShares[proposalMetadata.proposer] += proposalMetadata.sharesLocked;
-        uint256 gasLeftBeforeExecuting = msg.gas;
-        if (proposal.proposalType == ProposalType.GRANT_NEW_SHARES)
+        if (action.actionType == ActionType.GRANT_NEW_SHARES)
         {
-            _grantShares(address(proposal.param1), proposal.param2);
+            _grantShares(address(action.param1), action.param2);
         }
-        else if (proposal.proposalType == ProposalType.DESTROY_SHARES)
+        else if (action.actionType == ActionType.DESTROY_SHARES)
         {
-            _destroyShares(proposal.param1);
+            _destroyShares(action.param1);
         }
-        else if (proposal.proposalType == ProposalType.INCREASE_SHARE_GRANULARITY)
+        else if (action.actionType == ActionType.INCREASE_SHARE_GRANULARITY)
         {
-            _increaseShareGranularity(proposal.param1);
+            _increaseShareGranularity(action.param1);
         }
-        else if (proposal.proposalType == ProposalType.CALL_FUNCTION)
+        else if (action.actionType == ActionType.CALL_FUNCTION)
         {
-            address(proposal.param1).call.value(0)(bytes4(bytes32(proposal.param3)), proposal.param6);
+            address(action.param1).call.value(0)(bytes4(bytes32(action.param3)), action.param6);
             //receiver.call.value(0)(bytes4(keccak256(_custom_fallback)), msg.sender, _value, _data);
         }
-        else if (proposal.proposalType == ProposalType.REWARD_SHAREHOLDERS_ETHER)
+        else if (action.actionType == ActionType.REWARD_SHAREHOLDERS_ETHER)
         {
-            _rewardShareholdersEther(proposal.param1);
+            _rewardShareholdersEther(action.param1);
         }
-        else if (proposal.proposalType == ProposalType.SET_FUNCTION_RESTRICTION)
+        else if (action.actionType == ActionType.MULTIPLE_ACTIONS)
         {
-            uint256 minimumVotesRequired = (proposal.param2 >> 0) & 0xFFFFFFFF;
-            uint256 indexToWriteTo = (proposal.param2 >> 32) & 0xFFFFFFFF;
-            bool activeStatus = ((proposal.param2 >> 64) & 0xFFFFFFFF) != 0;
-            bool organizationRefundsTxFee = ((proposal.param2 >> 96) & 0xFFFFFFFF) != 0;
-            uint256 minimumEther = proposal.param3;
-            uint256 maximumEther = proposal.param4;
+            Action[] storage actions = multipleActionProposalIndexToActions[proposalIndex];
+            for (uint256 i=0; i<actions.length; i++)
+            {
+                _executeProposal(actions[i], ~uint256(0));
+            }
+        }
+        else if (action.actionType == ActionType.SET_FUNCTION_RESTRICTION)
+        {
+            uint256 minimumVotesRequired = (action.param2 >> 0) & 0xFFFFFFFF;
+            uint256 indexToWriteTo = (action.param2 >> 32) & 0xFFFFFFFF;
+            bool activeStatus = ((action.param2 >> 64) & 0xFFFFFFFF) != 0;
+            bool organizationRefundsTxFee = ((action.param2 >> 96) & 0xFFFFFFFF) != 0;
+            uint256 minimumEther = action.param3;
+            uint256 maximumEther = action.param4;
             
-            FunctionRequirements[] storage contractFunctionRequirementses = contractFunctionRequirements[proposal.param1];
+            FunctionRequirements[] storage contractFunctionRequirementses = contractFunctionRequirements[action.param1];
             
             if (indexToWriteTo == contractFunctionRequirementses.length)
             {
@@ -599,14 +602,30 @@ contract Organization is ERC223
             contractFunctionRequirementses[indexToWriteTo].minimumEther = minimumEther;
             contractFunctionRequirementses[indexToWriteTo].maximumEther = maximumEther;
         }
-        else if (proposal.proposalType == ProposalType.SET_GLOBAL_SETTINGS)
+        else if (action.actionType == ActionType.SET_GLOBAL_SETTINGS)
         {
-            _setGlobalSettingsFromPackedValues(bytes32(proposal.param1));
+            _setGlobalSettingsFromPackedValues(bytes32(action.param1));
         }
         else
         {
             revert();
         }
+    }
+    
+    function executeProposal(uint256 proposalIndex) public
+    {
+        Action storage action = proposalActions[proposalIndex];
+        ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
+        ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndex];
+        require(proposalVotingStatus.status == ProposalStatus.VOTING);
+        require(proposalVotingStatus.totalYesVotesCast >= (totalShares * proposalVotingStatus.votesPerThousandRequired) / 1000);
+        proposalVotingStatus.status = ProposalStatus.EXECUTED;
+        unfinalizedPropalIndexes.remove(proposalIndex);
+        addressesToShares[proposalMetadata.proposer] += proposalMetadata.sharesLocked;
+        uint256 gasLeftBeforeExecuting = msg.gas;
+        
+        _executeProposal(action, proposalIndex);
+        
         if (proposalMetadata.organizationRefundsTxFee)
         {
             uint256 gasConsumed = msg.gas - gasLeftBeforeExecuting;
@@ -617,7 +636,7 @@ contract Organization is ERC223
     function proposeToGrantNewShares(address destination, uint256 shares, string description, uint256 maximumDurationTime) external
     {
         _createProposal1({
-            proposalType: ProposalType.GRANT_NEW_SHARES,
+            actionType: ActionType.GRANT_NEW_SHARES,
             param1: uint256(destination),
             param2: shares,
             param3: 0,
@@ -636,7 +655,7 @@ contract Organization is ERC223
     function proposeToIncreaseShareGranularity(uint256 multiplier, string description, uint256 maximumDurationTime) external
     {
         _createProposal1({
-            proposalType: ProposalType.INCREASE_SHARE_GRANULARITY,
+            actionType: ActionType.INCREASE_SHARE_GRANULARITY,
             param1: multiplier,
             param2: 0,
             param3: 0,
@@ -704,7 +723,7 @@ contract Organization is ERC223
         uint256 votesPerThousandRequired = _getContractFunctionVotesPerThousandRequired(uint256(contractAddress) ^ methodId, etherAmount);
         
         _createProposal1({
-            proposalType: ProposalType.CALL_FUNCTION,
+            actionType: ActionType.CALL_FUNCTION,
             param1: uint256(contractAddress),
             param2: etherAmount,
             param3: 0,
