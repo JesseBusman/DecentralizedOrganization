@@ -1,610 +1,526 @@
 // This contract is under construction! Do not use yet!
 
-pragma solidity ^0.4.19;
+pragma solidity ^0.4.25;
 
-import "./SetLibrary.sol";
-
-contract ERC20Basic
+interface ERC20
 {
-    //uint256 public totalSupply;
-    function totalSupply() public constant returns (uint256 _supply);
-    function balanceOf(address who) public view returns (uint256);
-    function transfer(address to, uint256 value) public returns (bool);
-    event Transfer(address indexed from, address indexed to, uint256 value);
+    function totalSupply() external view returns (uint);
+    function balanceOf(address tokenOwner) external view returns (uint balance);
+    function allowance(address tokenOwner, address spender) external view returns (uint remaining);
+    function transfer(address to, uint tokens) external returns (bool success);
+    function approve(address spender, uint tokens) external returns (bool success);
+    function transferFrom(address from, address to, uint tokens) external returns (bool success);
+    
+    event Transfer(address indexed from, address indexed to, uint tokens);
+    event Approval(address indexed tokenOwner, address indexed spender, uint tokens);
 }
 
-contract ERC223 is ERC20Basic
+interface ERC223Receiver
 {
-    //uint public totalSupply;
-    function balanceOf(address who) public constant returns (uint);
-    
-    function name() public constant returns (string _name);
-    function symbol() public constant returns (string _symbol);
-    function decimals() public constant returns (uint8 _decimals);
-    function totalSupply() public constant returns (uint256 _supply);
-    
-    function transfer(address to, uint value) public returns (bool ok);
-    function transfer(address to, uint value, bytes data) public returns (bool ok);
-    function transfer(address to, uint value, bytes data, string custom_fallback) public returns (bool ok);
-    event Transfer(address indexed from, address indexed to, uint value, bytes indexed data);
+    function tokenFallback(address _from, uint _value, bytes _data) external;
 }
 
-contract ContractReceiver
+interface ERC777TokensRecipient
 {
-    function tokenFallback(address _from, uint _value, bytes _data) public;
+    function tokensReceived(address operator, address from, address to, uint256 amount, bytes data, bytes operatorData) external;
 }
 
-contract Organization is ERC223
+contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
 {
-    using SetLibrary for SetLibrary.Set;
+    /////////////////////////////////////////////////
+    /////// DATA PATTERN
     
-    uint public constant ORGANIZATION_CONTRACT_VERSION = 0;
-    
-    ////////////////////////////////////////////
-    ////////////////////// Constructor
-    function Organization(uint256 _totalShares, uint256 _minimumVotesPerThousandToPerformAction) public
+    function _matchDataPatternToData(DataPattern storage dataPattern, bytes memory data) private view returns (bool)
     {
-        // Verify sanity of constructor arguments
-        require(_totalShares > 0);
-        require(_minimumVotesPerThousandToPerformAction <= 1000);
-        
-        // Grant initial shares to whoever deployed this contract
-        addressesToShares[msg.sender] = _totalShares;
-        totalShares = _totalShares;
-        allShareholders.add(msg.sender);
-        
-        // Absorb any existing balance that was accidentally sent here
-        availableOrganizationFunds += this.balance;
-        
-        // Set default settings
-        minimumVotesPerThousandToChangeMinimumVoteSettings = 1000;
-        minimumVotesPerThousandToChangeFunctionRequirements = 1000;
-        minimumVotesPerThousandToIncreaseShareGranularity = 1000 / 4;
-        minimumVotesPerThousandToGrantShares = 1000;
-        minimumVotesPerThousandToDestroyShares = 1000;
-        sharesPerThousandLockedToSubmitProposal = 50;
-        defaultFunctionRequirements.active = true;
-        defaultFunctionRequirements.minimumEther = 0;
-        defaultFunctionRequirements.maximumEther = ~uint256(0);
-        defaultFunctionRequirements.votesPerThousandRequired = _minimumVotesPerThousandToPerformAction;
-        defaultFunctionRequirements.organizationRefundsTxFee = false;
-    }
-    
-    ////////////////////////////////////////////
-    /////////////////////// Fallback function
-    function() public payable
-    {
-        availableOrganizationFunds += msg.value;
-        fundSources[msg.sender] += msg.value;
-    }
-	
-    ////////////////////////////////////////////
-    ////////////////////// Funds tracking
-    // All the funds in this organization contract are accounted for
-    // in these two variables.
-    mapping(address => uint256) public addressToBalance;
-    uint256 public availableOrganizationFunds;
-	
-	// This mapping keeps track of the sources of all the funds this
-	// organization has ever received.
-	mapping(address => uint256) public fundSources;
-	
-    ////////////////////////////////////////////
-    ////////////////////// Organization events
-    event EtherReceived(address source, uint256 amount);
-    event ProposalSubmitted(uint256 index);
-    event ProposalExecuted(uint256 index);
-	
-    ////////////////////////////////////////////
-    ////////////////////// Organization settings
-	uint256 minimumVotesPerThousandToChangeMinimumVoteSettings;
-	uint256 minimumVotesPerThousandToChangeFunctionRequirements;
-	uint256 minimumVotesPerThousandToIncreaseShareGranularity;
-    uint256 minimumVotesPerThousandToGrantShares;
-    uint256 minimumVotesPerThousandToDestroyShares;
-    uint256 sharesPerThousandLockedToSubmitProposal;
-	
-    ////////////////////////////////////////////
-    ////////////////////// Share functions (ERC20 & ERC223 compatible)
-    
-    function totalSupply() public view returns (uint256 _supply)
-    {
-        return totalShares;
-    }
-    
-    function balanceOf(address who) public view returns (uint)
-    {
-        return addressesToShares[who];
-    }
-    
-    function name() public constant returns (string _name)
-    {
-        return "Share"; // TODO
-    }
-    function symbol() public constant returns (string _symbol)
-    {
-        return "L0L"; // TODO
-    }
-    function decimals() public constant returns (uint8 _decimals)
-    {
-        return 0; // TODO
-    }
-    
-    function transfer(address _to, uint _value, bytes _data, string _custom_fallback) public returns (bool success)
-    {
-        if (isContract(_to))
+        if (dataPattern.minimumLength <= data.length && data.length <= dataPattern.maximumLength)
         {
-            _transferShares(msg.sender, _to, _value);
-            ContractReceiver receiver = ContractReceiver(_to);
-            receiver.call.value(0)(bytes4(keccak256(_custom_fallback)), msg.sender, _value, _data);
-            Transfer(msg.sender, _to, _value, _data);
+            bytes storage pattern_data = dataPattern.data;
+            bytes storage pattern_mask = dataPattern.mask;
+            for (uint256 i=0; i<pattern_data.length && i<data.length; i++)
+            {
+                if ((pattern_data[i] & pattern_mask[i]) != (data[i] & pattern_mask[i]))
+                {
+                    return false;
+                }
+            }
             return true;
         }
         else
         {
-            return transferToAddress(_to, _value, _data);
+            return false;
         }
     }
-    
-    // Function that is called when a user or another contract wants to transfer funds .
-    function transfer(address _to, uint _value, bytes _data) public returns (bool success)
+
+    struct DataPattern
     {
-        if (isContract(_to))
-        {
-            return transferToContract(_to, _value, _data);
-        }
-        else
-        {
-            return transferToAddress(_to, _value, _data);
-        }
+        uint256 minimumLength;
+        uint256 maximumLength;
+        bytes data;
+        bytes mask;
     }
-    function transfer(address _to, uint _value) public returns (bool success)
+    struct DataPatternAndVoteRules
     {
-        if (isContract(_to))
-        {
-            return transferToContract(_to, _value, "");
-        }
-        else
-        {
-            return transferToAddress(_to, _value, "");
-        }
+        DataPattern dataPattern;
+        VoteRules voteRules;
     }
     
-    function isContract(address _addr) private view returns (bool is_contract)
+    
+    
+    
+    
+    /////////////////////////////////////////////////
+    /////// UTILITY FUNCTIONS AND CONSTANTS
+    
+    function _packAddressAndFunctionId(address _address, bytes4 _functionId) private pure returns (bytes32)
     {
-        // If an address has a non-zero EXTCODESIZE, it is considered a contract.
-        uint codeSize;
-        assembly
+        return (bytes32(uint256(uint160(_address))) << 32) | bytes32(uint256(uint32(_functionId)));
+    }
+    
+    uint256 private constant MILLION = 1000*1000;
+    
+    
+    
+    
+    
+    
+    
+    
+    mapping(address => uint256) public shareholder_to_shares;
+    uint256 public totalShares;
+    
+    mapping(address => uint256) public shareholder_to_arrayIndex;
+    address[] public shareholders;
+
+    mapping(address => uint256) public subcontract_to_arrayIndex;
+    address[] public subcontracts;
+    
+    bool public organizationRefundsFees = true;
+    uint256 public maximumRefundedGasPrice = 20*1000*1000*1000;
+    
+    
+    
+    
+    string public name;
+    string public symbol;
+    
+    
+    
+    
+    // Test args:
+    // "Organization", "ORG", 1000, [1000000, 1000000, 1000000, 0], [1000000, 1000000, 1000000, 0]
+    
+    constructor(string _name, string _symbol, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _voteRulesToChangeVoteRules) public payable
+    {
+        require(_initialShares >= 1);
+        
+        name = _name;
+        symbol = _symbol;
+        
+        defaultVoteRules.exists = true;
+        defaultVoteRules.voteFractionYesNeeded = _defaultVoteRules[0];
+        defaultVoteRules.voteFractionOfSharesNeeded_startAmount = _defaultVoteRules[1];
+        defaultVoteRules.voteFractionOfSharesNeeded_endAmount = _defaultVoteRules[2];
+        defaultVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
+        
+        VoteRules memory voteRulesToChangeVoteRules;
+        voteRulesToChangeVoteRules.exists = true;
+        voteRulesToChangeVoteRules.voteFractionYesNeeded = _voteRulesToChangeVoteRules[0];
+        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_startAmount = _voteRulesToChangeVoteRules[1];
+        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_endAmount = _voteRulesToChangeVoteRules[2];
+        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRulesToChangeVoteRules[3];
+        
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addAddressDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
+        
+        totalShares = _initialShares;
+        
+        shareholders.push(this);
+
+        shareholders.push(msg.sender);
+        shareholder_to_shares[msg.sender] = _initialShares;
+        shareholder_to_arrayIndex[msg.sender] = 1;
+
+        subcontracts.push(this);
+        subcontract_to_arrayIndex[this] = 0;
+    }
+    
+    
+    
+    
+    
+    
+    ///////////////////////////////////////////////////////
+    ////// Fallback functions
+    
+    function () payable external
+    {
+        
+    }
+    
+    // ERC223
+    function tokenFallback(address, uint, bytes) external
+    {
+    }
+    
+    // ERC721
+    function onERC721Received(address, address, uint256, bytes) external pure returns(bytes4)
+    {
+        return bytes4(keccak256("onERC721Received(address,address,uint256,bytes)"));
+    }
+
+    // ERC777
+    function tokensReceived(address, address, address, uint256, bytes, bytes) external
+    {
+    }
+    
+    
+    
+    
+    
+    ///////////////////////////////////////////////////////
+    ////// Communication
+    
+    event Message(address indexed _from, address indexed _to, bool _encrypted, string _message, bytes32 indexed _relatedProposalIndex);
+    
+    
+    
+    
+    
+    ///////////////////////////////////////////////////////
+    ////// Voting rules from highest priority to lowest priority
+    
+    struct VoteRules
+    {
+        bool exists;
+        uint256 voteFractionYesNeeded;
+        uint256 voteFractionOfSharesNeeded_startAmount;
+        uint256 voteFractionOfSharesNeeded_endAmount;
+        uint256 voteFractionOfSharesNeeded_reductionPeriodSeconds;
+    }
+    
+    // Voting rules for transactions with a specific destination address and specific data pattern
+    mapping(address => DataPatternAndVoteRules[]) public addressAndDataPattern_to_voteRules;
+    
+    // Voting rules for transactions to a specific address and specific function ID
+    // (this is a special optimize case of the one above)
+    mapping(bytes32 => VoteRules) public addressAndFunctionId_to_voteRules;
+    
+    // Voting rules for transactions to a specific address
+    mapping(address => VoteRules) public address_to_voteRules;
+    
+    // Voting rules for transactions with a specific data pattern
+    DataPatternAndVoteRules[] public dataPattern_to_voteRules;
+    
+    // Voting rules for transactions with a specific function ID
+    mapping(bytes4 => VoteRules) public functionId_to_voteRules;
+    
+    // Voting rules for all other transactions
+    VoteRules public defaultVoteRules;
+    
+    function _validateVoteRules(VoteRules storage voteRules) private view
+    {
+        if (voteRules.exists)
         {
-            codeSize := extcodesize(_addr)
+            require(voteRules.voteFractionYesNeeded <= MILLION);
+            require(voteRules.voteFractionOfSharesNeeded_startAmount <= MILLION);
+            require(voteRules.voteFractionOfSharesNeeded_endAmount <= MILLION);
+            if (voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds == 0)
+            {
+                require(voteRules.voteFractionOfSharesNeeded_startAmount == voteRules.voteFractionOfSharesNeeded_endAmount);
+            }
+            else
+            {
+                require(voteRules.voteFractionOfSharesNeeded_startAmount > voteRules.voteFractionOfSharesNeeded_endAmount);
+            }
         }
-        return codeSize != 0;
     }
     
-    //function that is called when transaction target is an address
-    function transferToAddress(address _to, uint _value, bytes _data) private returns (bool success)
+    function _getVoteRulesOfTransaction(Transaction storage transaction) private view returns (VoteRules storage)
     {
-        _transferShares(msg.sender, _to, _value);
-        Transfer(msg.sender, _to, _value, _data);
-        return true;
-    }
-    
-    //function that is called when transaction target is a contract
-    function transferToContract(address _to, uint _value, bytes _data) private returns (bool success)
-    {
-        _transferShares(msg.sender, _to, _value);
-        ContractReceiver receiver = ContractReceiver(_to);
-        receiver.tokenFallback(msg.sender, _value, _data);
-        Transfer(msg.sender, _to, _value, _data);
-        return true;
-    }
-    
-    event Transfer(address indexed from, address indexed to, uint value, bytes indexed data);
-    
-    ////////////////////////////////////////////
-    ////////////////////// Share state variables
-    
-    mapping(address => uint256) addressesToShares;
-    uint256 public totalShares; // Redundant tracker of total amount of shares
-    SetLibrary.Set private allShareholders; // Tracker of all shareholders
-    
-    ////////////////////////////////////////////
-    ////////////////////// Internal share functions
-    function _transferShares(address from, address to, uint256 amount) internal
-    {
-        require(addressesToShares[from] >= amount);
-        
-        // Add the receiver to the shareholder club
-        if (amount > 0)
+        bytes4 functionId = 0x00000000;
+        if (transaction.data.length >= 4)
         {
-            allShareholders.add(to);
+        functionId =
+            (bytes4(transaction.data[0]) >>  0) |
+            (bytes4(transaction.data[1]) >>  8) |
+            (bytes4(transaction.data[2]) >> 16) |
+            (bytes4(transaction.data[3]) >> 24);
         }
         
-        addressesToShares[from] -= amount;
-        addressesToShares[to] += amount;
-        
-        // If the sender transfered all their shares, cancel their club membership
-        if (addressesToShares[from] == 0)
+        // destinationAddressAndDataPattern_to_voteRules
+        DataPatternAndVoteRules[] storage dataPatternAndVoteRuless = addressAndDataPattern_to_voteRules[transaction.destination];
+        for (uint256 i=0; i<dataPatternAndVoteRuless.length; i++)
         {
-            allShareholders.remove(from);
+            DataPatternAndVoteRules storage dataPatternAndVoteRules = dataPatternAndVoteRuless[i];
+            if (dataPatternAndVoteRules.voteRules.exists && _matchDataPatternToData(dataPatternAndVoteRules.dataPattern, transaction.data))
+            {
+                return dataPatternAndVoteRules.voteRules;
+            }
         }
         
-        // Make sure the same shares cannot vote multiple times on a proposal
-        for (uint256 i=0; i<unfinalizedPropalIndexes.values.length; i++)
+        // Use addressAndFunctionId_to_voteRules
+        bytes32 addressAndFunctionId = _packAddressAndFunctionId(transaction.destination, functionId);
+        if (addressAndFunctionId_to_voteRules[addressAndFunctionId].exists) return addressAndFunctionId_to_voteRules[addressAndFunctionId];
+        
+        // address_to_voteRules
+        if (address_to_voteRules[transaction.destination].exists) return address_to_voteRules[transaction.destination];
+        
+        // dataPattern_to_voteRules
+        dataPatternAndVoteRuless = dataPattern_to_voteRules;
+        for (uint256 j=0; j<dataPatternAndVoteRuless.length; j++)
         {
-            if (unfinalizedPropalIndexes.values[i] == MAX_UINT256) continue;
-            uint256 votesMoved = min(proposalVotingStatuses[unfinalizedPropalIndexes.values[i]].addressesToVotesCast[from], amount);
-            proposalVotingStatuses[unfinalizedPropalIndexes.values[i]].addressesToVotesCast[from] -= votesMoved;
-            proposalVotingStatuses[unfinalizedPropalIndexes.values[i]].addressesToVotesCast[to] += votesMoved;
+            dataPatternAndVoteRules = dataPatternAndVoteRuless[j];
+            if (dataPatternAndVoteRules.voteRules.exists && _matchDataPatternToData(dataPatternAndVoteRules.dataPattern, transaction.data))
+            {
+                return dataPatternAndVoteRules.voteRules;
+            }
         }
         
-        // Trigger event
-        Transfer(from, to, amount, "");
+        // functionId_to_voteRules
+        if (functionId_to_voteRules[functionId].exists) return functionId_to_voteRules[functionId];
+        
+        // defaultVoteRules
+        return defaultVoteRules;
     }
-    function _grantShares(address to, uint256 amount) internal
+    
+    function _getVoteRulesOfProposal(uint256 _proposalIndex) public view returns (uint256 voteFractionYesNeeded, uint256 voteFractionOfSharesNeeded_startAmount, uint256 voteFractionOfSharesNeeded_endAmount, uint256 voteFractionOfSharesNeeded_reductionPeriodSeconds)
     {
-        totalShares += amount;
-        // Use safeMul in advance to protect against any future overflow.
-        safeMul(MAX_ETHER, totalShares);
-        safeMul(1000, totalShares);
-        addressesToShares[to] += amount;
-        if (amount > 0)
+        require(_proposalIndex < proposals.length);
+        VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
+        return (
+            voteRules.voteFractionYesNeeded,
+            voteRules.voteFractionOfSharesNeeded_startAmount,
+            voteRules.voteFractionOfSharesNeeded_endAmount,
+            voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds
+        );
+    }
+    
+    function _getVoteRulesOfProposal(Proposal storage proposal) private view returns (VoteRules memory)
+    {
+        VoteRules memory voteRules;
+        voteRules.voteFractionYesNeeded = 0;
+        voteRules.voteFractionOfSharesNeeded_startAmount = 0;
+        voteRules.voteFractionOfSharesNeeded_endAmount = MILLION;
+        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = 0;
+        for (uint256 i=0; i<proposal.transactions.length; i++)
         {
-            allShareholders.add(to);
+            VoteRules storage current = _getVoteRulesOfTransaction(proposal.transactions[i]);
+            if (current.voteFractionYesNeeded > voteRules.voteFractionYesNeeded)
+            {
+                voteRules.voteFractionYesNeeded = current.voteFractionYesNeeded;
+            }
+            if (current.voteFractionOfSharesNeeded_startAmount > voteRules.voteFractionOfSharesNeeded_startAmount)
+            {
+                voteRules.voteFractionOfSharesNeeded_startAmount = current.voteFractionOfSharesNeeded_startAmount;
+            }
+            if (current.voteFractionOfSharesNeeded_endAmount > voteRules.voteFractionOfSharesNeeded_endAmount)
+            {
+                voteRules.voteFractionOfSharesNeeded_endAmount = current.voteFractionOfSharesNeeded_endAmount;
+            }
+            if (current.voteFractionOfSharesNeeded_reductionPeriodSeconds > voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds)
+            {
+                voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = current.voteFractionOfSharesNeeded_reductionPeriodSeconds;
+            }
         }
+        return voteRules;
     }
-    function _destroyShares(uint256 amount) internal
+    
+    
+    
+    
+    
+    ///////////////////////////////////////////////////////
+    ////// Transaction
+    
+    struct Transaction
     {
-        require(addressesToShares[this] >= amount);
-        addressesToShares[this] -= amount;
-        totalShares -= amount;
+        address destination;
+        uint256 value;
+        bytes data;
     }
-    function _increaseShareGranularity(uint256 multiplier) internal
+    
+    function _executeTransaction(Transaction storage transaction) private
     {
-        require(multiplier > 0);
-        
-        // Multiply the total amount of shares.
-        // Using safeMul in advance to protect against any future overflow.
-        totalShares = safeMul(totalShares, multiplier);
-        safeMul(MAX_ETHER, totalShares);
-        safeMul(1000, totalShares);
-        
-        // Multiply every shareholder's individual share count.
-        // We don't have to check for overflow here because totalShares
-        // is always >= each individual's share count.
-        for (uint256 i=0; i<allShareholders.values.length; i++)
-        {
-            addressesToShares[address(allShareholders.values[i])] *= multiplier;
-        }
+        require(transaction.destination.call.value(transaction.value)(transaction.data) == true);
     }
     
-    ////////////////////////////////////////////
-    ////////////////////// Function requirements
     
-    // When a CALL_FUNCTION Proposal is submitted,
-    // the defaultFunctionRequirements will need to be met for it to be
-    // executed.
-    // For each function of each contract on the blockchain, a custom
-    // FunctionRequirements can be configured. For example, you can configure one
-    // function to require 10% votes, and another to require 80% votes.
     
-	struct FunctionRequirements
-	{
-	    // Metadata
-		bool active;
-        
-	    // Requirements for function call
-		uint256 minimumEther;
-		uint256 maximumEther;
-		uint256 votesPerThousandRequired;
-		
-		// Additional
-		bool organizationRefundsTxFee;
-	}
-	
-	FunctionRequirements public defaultFunctionRequirements;
-	
-	// We need a way to list all active function restrictions
-	uint256[] public contractFunctionsWithCustomFunctionRequirements;
-	
-	// A mapping of (contractAddress XOR methodId) to FunctionRequirements's
-	mapping(uint256 => FunctionRequirements[]) public contractFunctionRequirements;
     
-    ////////////////////////////////////////////
-    ////////////////////// Proposals
     
-    enum ActionType
-    {
-        __NONE,
-        
-        GRANT_NEW_SHARES,
-        // param1: address to grant shares to
-        // param2: amount of shares
-        
-        DESTROY_SHARES,
-        // param1: amount of shares to destroy
-        
-        INCREASE_SHARE_GRANULARITY,
-        // param1: multiplier
-        
-        CALL_FUNCTION,
-        // param1: address to call
-        // param2: amount of ether to transfer
-        // param6: transaction data
-        // param7: function signature
-        
-        REWARD_SHAREHOLDERS_ETHER,
-        // param1: total amount of ETH to reward
-        
-        REWARD_SHAREHOLDERS_TOKEN,
-        // param1: total amount of tokens to reward
-        // param2: token contract address
-        
-        SET_FUNCTION_RESTRICTION,
-        // param1: the contract address XOR method ID
-        // param2[bytes  3.. 0]: minimum votes required
-        // param2[bytes  7.. 4]: contractFunctionRequirements index to write to
-        // param2[bytes 11.. 8]: active status
-        // param2[bytes 15..12]: organization refunds tx fee
-        // param3: minimum ether to send
-        // param4: maximum ether to send
-        
-        SET_GLOBAL_SETTINGS,
-    	// param1[bytes 31..30]: minimumVotesToChangeMinimumVoteSettings      (if equal to 0xFFFF, keep the current value)
-    	// param1[bytes 29..28]: minimumVotesToChangeFunctionRequirements     (if equal to 0xFFFF, keep the current value)
-    	// param1[bytes 27..26]: minimumVotesToIncreaseShareGranularity       (if equal to 0xFFFF, keep the current value)
-        // param1[bytes 25..24]: minimumVotesToGrantShares                    (if equal to 0xFFFF, keep the current value)
-        // param1[bytes 23..22]: minimumVotesToDestroyShares                  (if equal to 0xFFFF, keep the current value)
-        // param1[bytes 21..20]: minimumLockedSharesPerThousandToSubmitProposal (if equal to 0xFFFF, keep the current value)
-        
-        MULTIPLE_ACTIONS
-    }
+    
+    ///////////////////////////////////////////////////////
+    ////// Proposal
+    
     enum ProposalStatus
     {
-        VOTING,
+        NOT_SUBMITTED,
+        SUBMITTED,
         REJECTED,
-        EXPIRED,
-        EXECUTED
+        ACCEPTED
     }
-    struct Action
+    
+    struct Proposal
     {
-        ActionType actionType;
-        uint256 param1;
-        uint256 param2;
-        uint256 param3;
-        uint256 param4;
-        bytes param5;
-        string param6;
-    }
-    struct ProposalMetadata
-    {
+        // Constants
+        address submitter;
+        uint256 timeSubmitted;
         string description;
-        address proposer;
-        uint256 timestampProposed;
-        uint256 timestampExpired;
-        uint256 sharesLocked;
-        bool organizationRefundsTxFee;
-    }
-    struct ProposalVotingStatus
-    {
+        Transaction[] transactions;
+        
+        // Variables
         ProposalStatus status;
-        uint256 votesPerThousandRequired;
-        uint256 totalVotesCast;
-        uint256 totalYesVotesCast;
-        mapping(address => uint256) addressesToVotesCast;
-        mapping(address => uint256) addressesToYesVotesCast;
+        mapping(address => VoteStatus) votes;
+        address[] voters;
     }
-	
-	mapping(uint256 => Action[]) public multipleActionProposalIndexToActions;
-	
-    Action[] public proposalActions;
-    ProposalMetadata[] public proposalMetadatas;
-    ProposalVotingStatus[] public proposalVotingStatuses;
     
-    SetLibrary.Set private unfinalizedPropalIndexes;
+    Proposal[] public proposals;
     
-    function _createProposal1(
-        ActionType actionType,
-        uint256 param1,
-        uint256 param2,
-        uint256 param3,
-        uint256 param4,
-        bytes param5,
-        string param6
-    ) internal
+    enum SubmitProposal_Extras
     {
-        unfinalizedPropalIndexes.add(proposalActions.length);
-        proposalActions.push(Action({
-            actionType: actionType,
-            param1: param1,
-            param2: param2,
-            param3: param3,
-            param4: param4,
-            param5: param5,
-            param6: param6
-        }));
+        NO_EXTRAS,
+        VOTE_YES,
+        VOTE_YES_AND_FINALIZE
     }
     
-    function _createProposal2(
-        // Constant metadata
-        string description,
-        uint256 maximumDurationTime,
-        bool organizationRefundsTxFee,
+    // Test args
+    // "Test proposal. blablabla", ["0x1111111111111111111111111111111111111111"], [12321], [0], [], true, true
+    function submitProposal(string _description, address[] transactionDestinations, uint256[] transactionValues, uint256[] transactionDataLengths, bytes transactionDatas, SubmitProposal_Extras extras) external
+    {
+        require(transactionDestinations.length == transactionValues.length && transactionValues.length == transactionDataLengths.length);
+        
+        proposals.length++;
+        
+        Proposal storage proposal = proposals[proposals.length-1];
+        proposal.submitter = msg.sender;
+        proposal.timeSubmitted = block.timestamp;
+        proposal.description = _description;
+        proposal.status = ProposalStatus.SUBMITTED;
+        
+        proposal.transactions.length = transactionDestinations.length;
+        
+        uint256 dataPos;
+        uint256 i;
+        
+        dataPos = 0;
+        for (i=0; i<transactionDataLengths.length; i++)
+        {
+            dataPos += transactionDataLengths[i];
+        }
+        
+        require(dataPos == transactionDatas.length);
+        
+        dataPos = 0;
+        for (i=0; i<transactionDestinations.length; i++)
+        {
+            Transaction storage transaction = proposal.transactions[i];
+            transaction.destination = transactionDestinations[i];
+            transaction.value = transactionValues[i];
+            _submitNewProposal_part_copyTransactionData(transaction, transactionDataLengths[i], transactionDatas, dataPos);
+            dataPos += transactionDataLengths[i];
+        }
+        
+        if (extras >= SubmitProposal_Extras.VOTE_YES)
+        {
+            vote(
+                proposals.length-1,
+                VoteStatus.YES,
+                extras == SubmitProposal_Extras.VOTE_YES_AND_FINALIZE
+            );
+        }
+    }
+    
+    function _submitNewProposal_part_copyTransactionData(Transaction storage transaction, uint256 length, bytes allData, uint256 startPos) private
+    {
+        bytes memory theData = new bytes(length);
+        for (uint256 i=0; i<length; i++)
+        {
+            theData[i] = allData[startPos];
+            startPos++;
+        }
+        transaction.data = theData;
+    }
+    
+    function finalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
+    {
+        uint256 amount = _proposalIndices.length;
+        finalizedProposalIndices = new uint256[](amount);
+        uint256 amountFinalized = 0;
+        for (uint256 i=0; i<amount; i++)
+        {
+            uint256 proposalIndex = _proposalIndices[i];
+            if (finalizeProposal(proposalIndex, _voters, _accept[i]))
+            {
+                finalizedProposalIndices[amountFinalized] = proposalIndex;
+                amountFinalized++;
+            }
+        }
+        assembly { mstore(finalizedProposalIndices, amountFinalized) }
+    }
+    
+    function finalizeProposal(uint256 _proposalIndex) public returns (bool finalized)
+    {
+        return finalizeProposal(_proposalIndex, new address[](0), false);
+    }
+    
+    function finalizeProposal(uint256 _proposalIndex, address[] _voters, bool _acceptHint) public returns (bool finalized)
+    {
+        uint256 startGas = gasleft();
 
-        // Voting status
-        uint256 votesPerThousandRequired
-    ) internal
-    {
-        uint256 sharesLocked = (totalShares * sharesPerThousandLockedToSubmitProposal) / 1000;
-        require(addressesToShares[msg.sender] >= sharesLocked);
-        addressesToShares[msg.sender] -= sharesLocked;
+        Proposal storage proposal = proposals[_proposalIndex];
         
-        proposalMetadatas.push(ProposalMetadata({
-            description: description,
-            proposer: msg.sender,
-            timestampProposed: block.timestamp,
-            timestampExpired: block.timestamp + maximumDurationTime,
-            sharesLocked: sharesLocked,
-            organizationRefundsTxFee: organizationRefundsTxFee
-        }));
-        proposalVotingStatuses.push(ProposalVotingStatus({
-            status: ProposalStatus.VOTING,
-            votesPerThousandRequired: votesPerThousandRequired,
-            totalVotesCast: 0,
-            totalYesVotesCast: 0
-        }));
-    }
-    
-    function cancelExpiredProposal(uint256 proposalIndex) external
-    {
-        require(block.timestamp >= proposalMetadatas[proposalIndex].timestampExpired);
-        
-        proposalVotingStatuses[proposalIndex].status = ProposalStatus.EXPIRED;
-        unfinalizedPropalIndexes.remove(proposalIndex);
-        addressesToShares[proposalMetadatas[proposalIndex].proposer] += proposalMetadatas[proposalIndex].sharesLocked;
-    }
-    
-    function _rejectProposal(uint256 proposalIndex) internal
-    {
-        proposalVotingStatuses[proposalIndex].status = ProposalStatus.REJECTED;
-        unfinalizedPropalIndexes.remove(proposalIndex);
-        addressesToShares[proposalMetadatas[proposalIndex].proposer] += proposalMetadatas[proposalIndex].sharesLocked;
-    }
-    
-    function voteOnProposals(uint256[] proposalIndexes, bool[] proposalVotes) external
-    {
-        require(proposalIndexes.length == proposalVotes.length);
-        
-        uint256 sharesAvailableToVoteWith = addressesToShares[msg.sender];
-        
-        for (uint i=0; i<proposalIndexes.length; i++)
+        if (proposal.status != ProposalStatus.SUBMITTED)
         {
-            uint256 proposalIndex = proposalIndexes[i];
-            //Proposal storage proposal = proposals[proposalIndex];
-            //ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
-            ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndex];
-            
-            // If the proposal is already finalized, skip it.
-            // TODO: maybe we should allow people to vote after a proposal is finalized.
-            if (proposalVotingStatus.status != ProposalStatus.VOTING)
+            return false;
+        }
+        
+        VoteResult proposalVoteResult = checkProposalVoteResult(_proposalIndex, _voters, _acceptHint);
+        
+        if (proposalVoteResult == VoteResult.NOT_ENOUGH_VOTES)
+        {
+            return false;
+        }
+        else if (proposalVoteResult == VoteResult.READY_TO_ACCEPT)
+        {
+            if (_voters.length != 0 && !_acceptHint)
             {
-                continue;
+                return false;
             }
             
-            // If we have shares that we haven't voted with yet
-            if (sharesAvailableToVoteWith > proposalVotingStatus.addressesToVotesCast[msg.sender])
+            proposal.status = ProposalStatus.ACCEPTED;
+
+            for (uint256 j=0; j<proposal.transactions.length; j++)
             {
-                uint256 unusedVotes = sharesAvailableToVoteWith - proposalVotingStatus.addressesToVotesCast[msg.sender];
-                
-                proposalVotingStatus.totalVotesCast += unusedVotes;
-                if (proposalVotes[i] == true) proposalVotingStatus.totalYesVotesCast += unusedVotes;
-                proposalVotingStatus.addressesToVotesCast[msg.sender] += unusedVotes;
-                
-                // If there are enough no votes to permanently reject the proposal, reject it:
-                if ((proposalVotingStatus.totalVotesCast - proposalVotingStatus.totalYesVotesCast) >= (totalShares * proposalVotingStatus.votesPerThousandRequired) / 1000)
-                {
-                    unfinalizedPropalIndexes.remove(i);
-                    _rejectProposal(proposalIndexes[i]);
-                }
-            }
-        }
-    }
-    
-    function _setGlobalSettingsFromPackedValues(bytes32 packedValues) private
-    {
-            bytes2 part1 = bytes2(packedValues <<  0);
-            bytes2 part2 = bytes2(packedValues << 16);
-            bytes2 part3 = bytes2(packedValues << 32);
-            bytes2 part4 = bytes2(packedValues << 48);
-            bytes2 part5 = bytes2(packedValues << 64);
-            bytes2 part6 = bytes2(packedValues << 80);
-            if (part1 != 0xFFFF) minimumVotesPerThousandToChangeMinimumVoteSettings = uint16(part1);
-            if (part2 != 0xFFFF) minimumVotesPerThousandToChangeFunctionRequirements = uint16(part2);
-            if (part3 != 0xFFFF) minimumVotesPerThousandToIncreaseShareGranularity = uint16(part3);
-            if (part4 != 0xFFFF) minimumVotesPerThousandToGrantShares = uint16(part4);
-            if (part5 != 0xFFFF) minimumVotesPerThousandToDestroyShares = uint16(part5);
-            if (part6 != 0xFFFF) sharesPerThousandLockedToSubmitProposal = uint16(part6);
-    }
-    
-    function _rewardShareholdersEther(uint256 totalReward) internal
-    {
-        require(availableOrganizationFunds >= totalReward);
-        availableOrganizationFunds -= totalReward;
-        uint256 totalRewarded = 0;
-        for (uint256 i=0; i<allShareholders.values.length; i++)
-        {
-            address shareholder = address(allShareholders.values[i]);
-            uint256 rewardForCurrentShareholder = totalReward * addressesToShares[shareholder] / totalShares;
-            addressToBalance[shareholder] += rewardForCurrentShareholder;
-            totalRewarded += rewardForCurrentShareholder;
-        }
-        
-        // Sanity check
-        assert(totalRewarded <= totalReward);
-        
-        // If the divisions had a remainder, put it back into the organizaition funds.
-        uint256 remainder = totalReward - totalRewarded;
-        availableOrganizationFunds += remainder;
-    }
-    
-    function _executeProposal(Action storage action, uint256 proposalIndex) internal
-    {
-        if (action.actionType == ActionType.GRANT_NEW_SHARES)
-        {
-            _grantShares(address(action.param1), action.param2);
-        }
-        else if (action.actionType == ActionType.DESTROY_SHARES)
-        {
-            _destroyShares(action.param1);
-        }
-        else if (action.actionType == ActionType.INCREASE_SHARE_GRANULARITY)
-        {
-            _increaseShareGranularity(action.param1);
-        }
-        else if (action.actionType == ActionType.CALL_FUNCTION)
-        {
-            address(action.param1).call.value(0)(bytes4(bytes32(action.param3)), action.param6);
-            //receiver.call.value(0)(bytes4(keccak256(_custom_fallback)), msg.sender, _value, _data);
-        }
-        else if (action.actionType == ActionType.REWARD_SHAREHOLDERS_ETHER)
-        {
-            _rewardShareholdersEther(action.param1);
-        }
-        else if (action.actionType == ActionType.MULTIPLE_ACTIONS)
-        {
-            Action[] storage actions = multipleActionProposalIndexToActions[proposalIndex];
-            for (uint256 i=0; i<actions.length; i++)
-            {
-                _executeProposal(actions[i], ~uint256(0));
-            }
-        }
-        else if (action.actionType == ActionType.SET_FUNCTION_RESTRICTION)
-        {
-            uint256 minimumVotesRequired = (action.param2 >> 0) & 0xFFFFFFFF;
-            uint256 indexToWriteTo = (action.param2 >> 32) & 0xFFFFFFFF;
-            bool activeStatus = ((action.param2 >> 64) & 0xFFFFFFFF) != 0;
-            bool organizationRefundsTxFee = ((action.param2 >> 96) & 0xFFFFFFFF) != 0;
-            uint256 minimumEther = action.param3;
-            uint256 maximumEther = action.param4;
-            
-            FunctionRequirements[] storage contractFunctionRequirementses = contractFunctionRequirements[action.param1];
-            
-            if (indexToWriteTo == contractFunctionRequirementses.length)
-            {
-                contractFunctionRequirementses.length++;
+                _executeTransaction(proposal.transactions[j]);
             }
             
-            require(indexToWriteTo < contractFunctionRequirementses.length);
+            if (organizationRefundsFees)
+            {
+                uint256 gasUsed = startGas - gasleft();
+                uint256 gasPrice = tx.gasprice <= maximumRefundedGasPrice ? tx.gasprice : maximumRefundedGasPrice;
+                uint256 txFeeRefund = gasUsed * gasPrice;
+                if (txFeeRefund > address(this).balance) txFeeRefund = address(this).balance;
+                msg.sender.transfer(txFeeRefund);
+            }
             
-            contractFunctionRequirementses[indexToWriteTo].votesPerThousandRequired = minimumVotesRequired;
-            contractFunctionRequirementses[indexToWriteTo].active = activeStatus;
-            contractFunctionRequirementses[indexToWriteTo].organizationRefundsTxFee = organizationRefundsTxFee;
-            contractFunctionRequirementses[indexToWriteTo].minimumEther = minimumEther;
-            contractFunctionRequirementses[indexToWriteTo].maximumEther = maximumEther;
+            return true;
         }
-        else if (action.actionType == ActionType.SET_GLOBAL_SETTINGS)
+        else if (proposalVoteResult == VoteResult.READY_TO_REJECT)
         {
-            _setGlobalSettingsFromPackedValues(bytes32(action.param1));
+            if (_voters.length != 0 && _acceptHint)
+            {
+                return false;
+            }
+            
+            proposal.status = ProposalStatus.REJECTED;
+            
+            return true;
         }
         else
         {
@@ -612,180 +528,555 @@ contract Organization is ERC223
         }
     }
     
-    function executeProposal(uint256 proposalIndex) public
+    
+    
+    
+    
+    ///////////////////////////////////////////////////////
+    ////// Proposal voting
+    
+    enum VoteStatus
     {
-        Action storage action = proposalActions[proposalIndex];
-        ProposalMetadata storage proposalMetadata = proposalMetadatas[proposalIndex];
-        ProposalVotingStatus storage proposalVotingStatus = proposalVotingStatuses[proposalIndex];
-        require(proposalVotingStatus.status == ProposalStatus.VOTING);
-        require(proposalVotingStatus.totalYesVotesCast >= (totalShares * proposalVotingStatus.votesPerThousandRequired) / 1000);
-        proposalVotingStatus.status = ProposalStatus.EXECUTED;
-        unfinalizedPropalIndexes.remove(proposalIndex);
-        addressesToShares[proposalMetadata.proposer] += proposalMetadata.sharesLocked;
-        uint256 gasLeftBeforeExecuting = msg.gas;
+        NOT_VOTED_YET,
         
-        _executeProposal(action, proposalIndex);
+        PERMANENT_NO,
+        NO,
+        ACTIVE_ABSTAIN, // Active abstention counts as a vote
+        YES,
+        PERMANENT_YES,
         
-        if (proposalMetadata.organizationRefundsTxFee)
+        // Passive abstention does not count as a vote
+        PASSIVE_ABSTAIN
+    }
+    
+    enum VoteResult
+    {
+        NOT_ENOUGH_VOTES,
+        READY_TO_REJECT,
+        READY_TO_ACCEPT
+    }
+    
+    function checkProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
+    {
+        uint256 totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
+        uint256 totalVotesCast = 0; // yes + no + active abstain
+        uint256 yesVotes = 0; // yes
+        uint256 noVotes = 0; // no
+        
+        bool externallySuppliedVoterList;
+        if (_voters.length == 0)
         {
-            uint256 gasConsumed = msg.gas - gasLeftBeforeExecuting;
-            msg.sender.transfer(gasConsumed * tx.gasprice);
-        }
-    }
-    
-    function proposeToGrantNewShares(address destination, uint256 shares, string description, uint256 maximumDurationTime) external
-    {
-        _createProposal1({
-            actionType: ActionType.GRANT_NEW_SHARES,
-            param1: uint256(destination),
-            param2: shares,
-            param3: 0,
-            param4: 0,
-            param5: "",
-            param6: ""
-        });
-        _createProposal2({
-            votesPerThousandRequired: minimumVotesPerThousandToGrantShares,
-            description: description,
-            maximumDurationTime: maximumDurationTime,
-            organizationRefundsTxFee: false
-        });
-    }
-    
-    function proposeToIncreaseShareGranularity(uint256 multiplier, string description, uint256 maximumDurationTime) external
-    {
-        _createProposal1({
-            actionType: ActionType.INCREASE_SHARE_GRANULARITY,
-            param1: multiplier,
-            param2: 0,
-            param3: 0,
-            param4: 0,
-            param5: "",
-            param6: ""
-        });
-        _createProposal2({
-            votesPerThousandRequired: minimumVotesPerThousandToIncreaseShareGranularity,
-            description: description,
-            maximumDurationTime: maximumDurationTime,
-            organizationRefundsTxFee: false
-        });
-    }
-    
-    function _getContractFunctionVotesPerThousandRequired(uint256 contractAddressXorMethodId, uint256 etherAmount) private view returns (uint256 votesPerThousandRequired)
-    {
-        FunctionRequirements storage requirements = defaultFunctionRequirements;
-        bool requireMatchingCustomRequirements = false;
-        bool foundMatchingCustomRequirements = false;
-
-        for (uint i=0; i<contractFunctionRequirements[contractAddressXorMethodId].length; i++)
-        {
-            if (contractFunctionRequirements[contractAddressXorMethodId][i].active)
-            {
-                requireMatchingCustomRequirements = true;
-                if (etherAmount >= contractFunctionRequirements[contractAddressXorMethodId][i].minimumEther &&
-                    etherAmount <= contractFunctionRequirements[contractAddressXorMethodId][i].maximumEther)
-                {
-                    foundMatchingCustomRequirements = true;
-                    requirements = contractFunctionRequirements[contractAddressXorMethodId][i];
-                    return requirements.votesPerThousandRequired;
-                }
-            }
-        }
-        
-        revert();
-        //require(requireMatchingCustomRequirements == false || foundMatchingCustomRequirements == true);
-    }
-    
-    function proposeToCallFunction(
-        address contractAddress,
-        uint256 etherAmount,
-        string functionSignature,
-        bytes arguments,
-        string description,
-        uint256 maximumDurationTime,
-        bool organizationRefundsTxFee
-    ) public
-    {
-        uint256 methodId;
-        
-        // Make sure that the method ID in data matches the function signature.
-        if (arguments.length == 0 && bytes(functionSignature).length == 0)
-        {
-            // Calling the fallback function
-            methodId = 0;
+            externallySuppliedVoterList = false;
+            _voters = proposals[_proposalIndex].voters;
         }
         else
         {
-            // Calling a non-fallback function
-            methodId = uint256(bytes32(bytes4(keccak256(functionSignature))));
+            externallySuppliedVoterList = true;
         }
         
-        uint256 votesPerThousandRequired = _getContractFunctionVotesPerThousandRequired(uint256(contractAddress) ^ methodId, etherAmount);
-        
-        _createProposal1({
-            actionType: ActionType.CALL_FUNCTION,
-            param1: uint256(contractAddress),
-            param2: etherAmount,
-            param3: 0,
-            param4: 0,
-            param5: arguments,
-            param6: functionSignature
-        });
-        _createProposal2({
-            description: description,
-            maximumDurationTime: maximumDurationTime,
-            organizationRefundsTxFee: organizationRefundsTxFee,
-            
-            votesPerThousandRequired: votesPerThousandRequired
-        });
-    }
-    
-    function proposeToTransferEther(address destination, uint256 etherAmount, string description, uint256 maximumDurationTime) external
-    {
-        proposeToCallFunction(destination, etherAmount, "", "", description, maximumDurationTime, false);
-    }
-    
-    function concat(address addr, uint256 integer) private pure returns(bytes memory)
-    {
-        bytes memory ret = new bytes(64);
-        bytes32 addrBytes = bytes32(addr);
-        bytes32 integerBytes = bytes32(integer);
-        for (uint i=0; i<32; i++)
+        // Loop over the voters and tally up their votes.
+        for (uint256 i=0; i<_voters.length; i++)
         {
-            ret[ 0 + i] = addrBytes[i];
-            ret[64 + i] = integerBytes[1];
+            uint256 votes = shareholder_to_shares[_voters[i]];
+            VoteStatus voteStatus = proposals[_proposalIndex].votes[_voters[i]];
+            totalVoterSharesCounted += votes;
+            if (voteStatus == VoteStatus.PERMANENT_NO)
+            {
+                totalVotesCast += votes;
+                noVotes += votes;
+            }
+            else if (voteStatus == VoteStatus.NO)
+            {
+                totalVotesCast += votes;
+                noVotes += votes;
+            }
+            else if (voteStatus == VoteStatus.ACTIVE_ABSTAIN)
+            {
+                totalVotesCast += votes;
+            }
+            else if (voteStatus == VoteStatus.YES)
+            {
+                totalVotesCast += votes;
+                yesVotes += votes;
+            }
+            else if (voteStatus == VoteStatus.PERMANENT_YES)
+            {
+                totalVotesCast += votes;
+                yesVotes += votes;
+            }
         }
-        return ret;
+        
+        // If the organization itself has not voted with its own shares yet,
+        // it actively abstains by default.
+        if (proposals[_proposalIndex].votes[this] == VoteStatus.NOT_VOTED_YET)
+        {
+            totalVotesCast += shareholder_to_shares[this];
+        }
+        
+        // Select and load the voting rules we should obey when finalizing this proposal.
+        VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
+        
+        uint256 fractionOfSharesNeeded;
+        
+        // If we have passed the end of the reduction period...
+        if (block.timestamp - proposals[_proposalIndex].timeSubmitted >= voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds)
+        {
+            fractionOfSharesNeeded = voteRules.voteFractionOfSharesNeeded_endAmount;
+        }
+        
+        // If we are in the reduction period...
+        else
+        {
+            fractionOfSharesNeeded =
+                voteRules.voteFractionOfSharesNeeded_startAmount
+                -
+                (voteRules.voteFractionOfSharesNeeded_startAmount - voteRules.voteFractionOfSharesNeeded_endAmount) * (block.timestamp - proposals[_proposalIndex].timeSubmitted) / voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds;
+        }
+        
+        // If the voter list was externally supplied,
+        // assume that all unknown votes are the opposite of the externally supplied hint.
+        if (externallySuppliedVoterList)
+        {
+            if (_acceptHint == true)
+            {
+                // Assume that all unknown votes are NO
+                noVotes += totalShares - totalVoterSharesCounted;
+            }
+            else
+            {
+                // Assume that all unknown votes are YES
+                yesVotes += totalShares - totalVoterSharesCounted;
+            }
+        }
+        
+        // If not enough votes have been cast,
+        // we should neither reject nor accept the proposal.
+        if ((totalVotesCast * MILLION / totalShares) < fractionOfSharesNeeded)
+        {
+            return VoteResult.NOT_ENOUGH_VOTES;
+        }
+        
+        // If there are enough yes votes to accept...
+        else if ((yesVotes * MILLION / (yesVotes + noVotes)) >= voteRules.voteFractionYesNeeded)
+        {
+            // If the accept hint does not match the result of the vote count,
+            // we should neither reject nor acccept the proposal.
+            if (externallySuppliedVoterList && _acceptHint == false)
+            {
+                return VoteResult.NOT_ENOUGH_VOTES;
+            }
+            else
+            {
+                return VoteResult.READY_TO_ACCEPT;
+            }
+        }
+        
+        // if there are enough no votes to reject...
+        else
+        {
+            // If the accept hint does not match the result of the vote count,
+            // we should neither reject nor acccept the proposal.
+            if (externallySuppliedVoterList && _acceptHint == true)
+            {
+                return VoteResult.NOT_ENOUGH_VOTES;
+            }
+            else
+            {
+                return VoteResult.READY_TO_REJECT;
+            }
+        }
     }
     
-    function proposeToTransferTokens(address tokenContractAddress, address destination, uint256 tokenAmount, string description, uint256 maximumDurationTime) external
+    function deleteVotersWithoutShares(uint256[] _proposalIndices, uint256[] _voterArrayIndices) external
     {
-        proposeToCallFunction(tokenContractAddress, 0, "transfer(address,uint256)", concat(destination, tokenAmount), description, maximumDurationTime, false);
-    }
-	
-    function withdraw(uint256 amountToWithdraw) external
-    {
-        require(addressToBalance[msg.sender] >= amountToWithdraw);
-        
-        addressToBalance[msg.sender] -= amountToWithdraw;
-        
-        msg.sender.transfer(amountToWithdraw);
+        require(_proposalIndices.length == _voterArrayIndices.length);
+        for (uint256 i=0; i<_proposalIndices.length; i++)
+        {
+            Proposal storage proposal = proposals[_proposalIndices[i]];
+            uint256 arrayIndexToDelete = _voterArrayIndices[i];
+            if (shareholder_to_shares[proposal.voters[arrayIndexToDelete]] == 0)
+            {
+                uint256 proposalVotersLengthMinusOne = proposal.voters.length-1;
+                if (arrayIndexToDelete < proposalVotersLengthMinusOne)
+                {
+                    proposal.voters[arrayIndexToDelete] = proposal.voters[proposalVotersLengthMinusOne];
+                }
+                proposal.voters.length = proposalVotersLengthMinusOne;
+            }
+        }
     }
     
-    ////////////////////////////////////////////
-    ////////////////////// Utility functions
-    function safeMul(uint a, uint b) pure internal returns (uint)
+    function voteMultiple(uint256[] _proposalIndices, VoteStatus[] _newVoteStatuses, bool[] _tryFinalize) public
     {
-        uint c = a * b;
-        assert(a == 0 || c / a == b); // throw on overflow & underflow
-        return c;
+        require(_proposalIndices.length == _newVoteStatuses.length && _proposalIndices.length == _tryFinalize.length);
+        uint256 amount = _proposalIndices.length;
+        for (uint256 i=0; i<amount; i++)
+        {
+            vote(_proposalIndices[i], _newVoteStatuses[i], _tryFinalize[i]);
+        }
     }
-    function min(uint256 i, uint256 j) pure internal returns (uint256)
+    
+    function vote(uint256 _proposalIndex, VoteStatus _newVoteStatus, bool _tryFinalize) public
     {
-        if (i <= j) return i;
-        else return j;
+        Proposal storage proposal = proposals[_proposalIndex];
+        
+        // The proposal must be in the submitted stage.
+        require(proposal.status == ProposalStatus.SUBMITTED);
+        
+        VoteStatus currentVoteStatus = proposal.votes[msg.sender];
+        
+        require(currentVoteStatus != VoteStatus.PERMANENT_NO && currentVoteStatus != VoteStatus.PERMANENT_YES);
+        require(_newVoteStatus != VoteStatus.NOT_VOTED_YET);
+        
+        require(shareholder_to_shares[msg.sender] > 0);
+
+        if (currentVoteStatus == VoteStatus.NOT_VOTED_YET)
+        {
+            proposal.voters.push(msg.sender);
+        }
+        proposal.votes[msg.sender] = _newVoteStatus;
+        
+        if (_tryFinalize)
+        {
+            finalizeProposal(_proposalIndex);
+        }
     }
-    uint256 constant MAX_UINT256 = ~uint256(0);
-    uint256 constant MILLION = 10 ** 6;
-    uint256 constant MAX_ETHER = (100 ether) * MILLION;
+    
+    
+    
+    
+    
+    
+    
+    /////////////////////////////////////
+    ////// Special functions
+    
+    function addSubcontract(address _subcontract) external
+    {
+        require(msg.sender == address(this));
+        if (subcontract_to_arrayIndex[_subcontract] == 0)
+        {
+            subcontract_to_arrayIndex[_subcontract] = subcontracts.length;
+            subcontracts.push(_subcontract);
+        }
+    }
+    
+    function removeSubcontract(address _subcontract) external
+    {
+        require(msg.sender == address(this));
+        require(_subcontract != address(this));
+        uint256 arrayIndex = subcontract_to_arrayIndex[_subcontract];
+        if (arrayIndex != 0)
+        {
+            if (arrayIndex < subcontracts.length-1)
+            {
+                address subcontractToMoveBack = subcontracts[subcontracts.length-1];
+                subcontracts[arrayIndex] = subcontractToMoveBack;
+                subcontract_to_arrayIndex[subcontractToMoveBack] = arrayIndex;
+            }
+            
+            subcontracts.length--;
+        }
+    }
+    
+    function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
+    {
+        require(msg.sender == address(this));
+        
+        defaultVoteRules.voteFractionYesNeeded = _defaultVoteRules[0];
+        defaultVoteRules.voteFractionOfSharesNeeded_startAmount = _defaultVoteRules[1];
+        defaultVoteRules.voteFractionOfSharesNeeded_endAmount = _defaultVoteRules[2];
+        defaultVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
+        
+        _validateVoteRules(defaultVoteRules);
+    }
+    
+    function setAddressAndFunctionIdVoteRules(address _address, bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
+    {
+        require(msg.sender == address(this));
+        bytes32 addressAndFunctionId = _packAddressAndFunctionId(_address, _functionId);
+        VoteRules storage voteRules = addressAndFunctionId_to_voteRules[addressAndFunctionId];
+        voteRules.exists = _exists;
+        voteRules.voteFractionYesNeeded = _voteRules[0];
+        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(voteRules);
+    }
+    
+    function setAddressVoteRules(address _address, bool _exists, uint256[4] _voteRules) external
+    {
+        require(msg.sender == address(this));
+        VoteRules storage voteRules = address_to_voteRules[_address];
+        voteRules.exists = _exists;
+        voteRules.voteFractionYesNeeded = _voteRules[0];
+        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(voteRules);
+    }
+    
+    function setFunctionIdVoteRules(bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
+    {
+        require(msg.sender == address(this));
+        VoteRules storage voteRules = functionId_to_voteRules[_functionId];
+        voteRules.exists = _exists;
+        voteRules.voteFractionYesNeeded = _voteRules[0];
+        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(voteRules);
+    }
+    
+    function addAddressDataPatternVoteRules(address _address, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
+    {
+        require(msg.sender == address(this));
+        addressAndDataPattern_to_voteRules[_address].length++;
+        DataPatternAndVoteRules storage dataPatternAndVoteRules = addressAndDataPattern_to_voteRules[_address][dataPattern_to_voteRules.length-1];
+        dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
+        dataPatternAndVoteRules.dataPattern.maximumLength = _dataMaximumLength;
+        dataPatternAndVoteRules.dataPattern.data = _dataPattern;
+        dataPatternAndVoteRules.dataPattern.mask = _dataMask;
+        dataPatternAndVoteRules.voteRules.exists = true;
+        dataPatternAndVoteRules.voteRules.voteFractionYesNeeded = _voteRules[0];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(dataPatternAndVoteRules.voteRules);
+    }
+    
+    function deleteAddressDataPatternVoteRules(address _address, uint256 _index) external
+    {
+        require(msg.sender == address(this));
+        _deleteDataPatternAndVoteRulesFromArray(addressAndDataPattern_to_voteRules[_address], _index);
+    }
+    
+    function addDataPatternVoteRules(uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
+    {
+        require(msg.sender == address(this));
+        dataPattern_to_voteRules.length++;
+        DataPatternAndVoteRules storage dataPatternAndVoteRules = dataPattern_to_voteRules[dataPattern_to_voteRules.length-1];
+        dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
+        dataPatternAndVoteRules.dataPattern.maximumLength = _dataMaximumLength;
+        dataPatternAndVoteRules.dataPattern.data = _dataPattern;
+        dataPatternAndVoteRules.dataPattern.mask = _dataMask;
+        dataPatternAndVoteRules.voteRules.exists = true;
+        dataPatternAndVoteRules.voteRules.voteFractionYesNeeded = _voteRules[0];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
+        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(dataPatternAndVoteRules.voteRules);
+    }
+    
+    function deleteDataPatternVoteRules(uint256 _index) external
+    {
+        require(msg.sender == address(this));
+        _deleteDataPatternAndVoteRulesFromArray(dataPattern_to_voteRules, _index);
+    }
+    
+    function _deleteDataPatternAndVoteRulesFromArray(DataPatternAndVoteRules[] storage _array, uint256 _index) private
+    {
+        require(_index < _array.length);
+        require(_array[_index].voteRules.exists);
+        
+        // If it's the last one...
+        if (_index == dataPattern_to_voteRules.length-1)
+        {
+            // ... delete the last one
+            dataPattern_to_voteRules[dataPattern_to_voteRules.length-1].voteRules.exists = false;
+            
+            // ... shrink the array by 1
+            dataPattern_to_voteRules.length--;
+        }
+        
+        // If it's not the last one AND there are at least 2...
+        else if (dataPattern_to_voteRules.length >= 2 && _index < dataPattern_to_voteRules.length-1)
+        {
+            // ... copy the last one into its slot
+            dataPattern_to_voteRules[_index] = dataPattern_to_voteRules[dataPattern_to_voteRules.length-1];
+            
+            // ... delete the last one
+            dataPattern_to_voteRules[dataPattern_to_voteRules.length-1].voteRules.exists = false;
+            
+            // ... shrink the array by 1
+            dataPattern_to_voteRules.length--;
+        }
+        
+        // Otherwise ...
+        else
+        {
+            // ... just set its existance to false
+            dataPattern_to_voteRules[_index].voteRules.exists = false;
+        }
+    }
+    
+    function createShares(uint256 _amount) external
+    {
+        require(msg.sender == address(this));
+        totalShares += _amount;
+        shareholder_to_shares[this] += _amount;
+        emit Transfer(0x0, this, _amount);
+    }
+    
+    function destroyShares(uint256 _amount) external
+    {
+        require(msg.sender == address(this));
+        require(shareholder_to_shares[this] >= _amount);
+        totalShares -= _amount;
+        shareholder_to_shares[this] -= _amount;
+        emit Transfer(this, 0x0, _amount);
+    }
+    
+    function splitShares(uint256 _multiplier) external
+    {
+        require(msg.sender == address(this));
+        for (uint256 i=0; i<shareholders.length; i++)
+        {
+            address shareholder = shareholders[i];
+            shareholder_to_shares[shareholder] *= _multiplier;
+        }
+    }
+    
+    function distributeEtherToShareholders(uint256 _weiAmount) external
+    {
+        require(msg.sender == address(this));
+        require(_weiAmount <= address(this).balance);
+        uint256 _totalShares = totalShares;
+        uint256 _totalShareholders = shareholders.length;
+        for (uint256 i=0; i<_totalShareholders; i++)
+        {
+            address shareholder = shareholders[i];
+            uint256 shares = shareholder_to_shares[shareholder];
+            shareholder.transfer(_weiAmount * shares / _totalShares);
+        }
+    }
+    
+    function distributeTokensToShareholders(address _tokenContract, uint256 _tokenAmount) external
+    {
+        require(msg.sender == address(this));
+        require(_tokenAmount <= ERC20(_tokenContract).balanceOf(this));
+        uint256 _totalShares = totalShares;
+        uint256 _totalShareholders = shareholders.length;
+        for (uint256 i=0; i<_totalShareholders; i++)
+        {
+            address shareholder = shareholders[i];
+            uint256 shares = shareholder_to_shares[shareholder];
+            ERC20(_tokenContract).transfer(shareholder, _tokenAmount * shares / _totalShares);
+        }
+    }
+    
+    function subcontractExecuteCall(address _destination, uint256 _value, bytes _data) external returns (bool _success)
+    {
+        require(subcontract_to_arrayIndex[msg.sender] != 0);
+        return _destination.call.value(_value)(_data) == true;
+    }
+    
+    function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice) external
+    {
+        require(msg.sender == address(this));
+        organizationRefundsFees = _organizationRefundsFees;
+        maximumRefundedGasPrice = _maximumRefundedGasPrice;
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    /////////////////////////////////////
+    ////// ERC20 implementation
+    
+    uint256 public constant decimals = 0;
+    
+    function totalSupply() external view returns (uint256)
+    {
+        return totalShares;
+    }
+    
+    function balanceOf(address _shareholder) external view returns (uint256)
+    {
+        return shareholder_to_shares[_shareholder];
+    }
+    
+    mapping(address => mapping(address => uint256)) public shareholder_to_spender_to_approvedAmount;
+    
+    function allowance(address _owner, address _spender) external view returns (uint256)
+    {
+        return shareholder_to_spender_to_approvedAmount[_owner][_spender];
+    }
+    
+    function _transferShares(address _from, address _to, uint256 _amount, bool _callTokenFallback, bytes memory _data) private
+    {
+        require(shareholder_to_shares[_from] >= _amount);
+        shareholder_to_shares[_from] -= _amount;
+        shareholder_to_shares[_to] += _amount;
+        if (_callTokenFallback)
+        {
+            uint256 codeLength;
+            assembly { codeLength := extcodesize(_to) }
+            if (codeLength > 0)
+            {
+                ERC223Receiver receiver = ERC223Receiver(_to);
+                receiver.tokenFallback(_from, _amount, _data);
+            }
+        }
+        emit Transfer(_from, _to, _amount);
+    }
+    
+    function transfer(address _to, uint256 _amount) external returns (bool)
+    {
+        _transferShares(msg.sender, _to, _amount, true, "");
+        return true;
+    }
+    
+    function transfer(address _to, uint256 _amount, bytes _data) external returns (bool)
+    {
+        _transferShares(msg.sender, _to, _amount, true, _data);
+        return true;
+    }
+    
+    function transferFrom(address _from, address _to, uint256 _amount) external returns (bool)
+    {
+        require(shareholder_to_spender_to_approvedAmount[msg.sender][_from] >= _amount);
+        shareholder_to_spender_to_approvedAmount[msg.sender][_from] -= _amount;
+        _transferShares(msg.sender, _to, _amount, false, "");
+        return true;
+    }
+    
+    function increaseApproval(address _spender, uint256 _amount) external returns (bool)
+    {
+        shareholder_to_spender_to_approvedAmount[msg.sender][_spender] += _amount;
+        emit Approval(msg.sender, _spender, shareholder_to_spender_to_approvedAmount[msg.sender][_spender]);
+        return true;
+    }
+    
+    function decreaseApproval(address _spender, uint256 _amount) external returns (bool)
+    {
+        require(shareholder_to_spender_to_approvedAmount[msg.sender][_spender] >= _amount);
+        shareholder_to_spender_to_approvedAmount[msg.sender][_spender] -= _amount;
+        emit Approval(msg.sender, _spender, shareholder_to_spender_to_approvedAmount[msg.sender][_spender]);
+        return true;
+    }
+    
+    // The approve() function is deprecated!
+    // It is recommended to use increaseApproval and decreaseApproval instead.
+    function approve(address _spender, uint256 _amount) external returns (bool)
+    {
+        shareholder_to_spender_to_approvedAmount[msg.sender][_spender] = _amount;
+        emit Approval(msg.sender, _spender, shareholder_to_spender_to_approvedAmount[msg.sender][_spender]);
+        return true;
+    }
 }
+
