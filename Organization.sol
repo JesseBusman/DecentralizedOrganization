@@ -25,10 +25,23 @@ interface ERC777TokensRecipient
     function tokensReceived(address operator, address from, address to, uint256 amount, bytes data, bytes operatorData) external;
 }
 
-contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
+interface TokenApprovalReceiver
+{
+    function receiveApproval(address _from, uint _value, address _token, bytes _extraData) external;
+}
+
+contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenApprovalReceiver
 {
     /////////////////////////////////////////////////
     /////// DATA PATTERN
+
+    struct DataPattern
+    {
+        uint256 minimumLength;
+        uint256 maximumLength;
+        bytes data;
+        bytes mask;
+    }
     
     function _matchDataPatternToData(DataPattern storage dataPattern, bytes memory data) private view returns (bool)
     {
@@ -50,19 +63,8 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
             return false;
         }
     }
-
-    struct DataPattern
-    {
-        uint256 minimumLength;
-        uint256 maximumLength;
-        bytes data;
-        bytes mask;
-    }
-    struct DataPatternAndVoteRules
-    {
-        DataPattern dataPattern;
-        VoteRules voteRules;
-    }
+    
+    
     
     
     
@@ -76,7 +78,6 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         return (bytes32(uint256(uint160(_address))) << 32) | bytes32(uint256(uint32(_functionId)));
     }
     
-    uint256 private constant MILLION = 1000*1000;
     
     
     
@@ -84,50 +85,112 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     
     
+    /////////////////////////////////////////////////
+    /////// SHARES
     
     mapping(address => uint256) public shareholder_to_shares;
     uint256 public totalShares;
     
+    
+    
+    
+    
+
+    /////////////////////////////////////////////////
+    /////// SHAREHOLDERS
+
     mapping(address => uint256) public shareholder_to_arrayIndex;
     address[] public shareholders;
+    
+    function amountOfShareholders() external view returns (uint256)
+    {
+        return shareholders.length;
+    }
+    
+    
+    
+    
+    
+    /////////////////////////////////////////////////
+    /////// SUBCONTRACTS
 
     mapping(address => uint256) public subcontract_to_arrayIndex;
     address[] public subcontracts;
     
+    address public etherTransferWithoutData_subcontract;
+    mapping(bytes4 => address) public functionId_to_subcontract;
+    SubcontractAddressAndDataPattern[] public subcontractAddressesAndDataPatterns;
+    
+    struct SubcontractAddressAndDataPattern
+    {
+        address subcontract;
+        DataPattern dataPattern;
+    }
+    
+    function amountOfSubcontracts() external view returns (uint256)
+    {
+        return subcontracts.length;
+    }
+    
+    
+    
+    
+    
+    
+    /////////////////////////////////////////////////
+    /////// GAS REFUND
+
     bool public organizationRefundsFees = true;
     uint256 public maximumRefundedGasPrice = 20*1000*1000*1000;
     
     
     
     
-    string public name;
-    string public symbol;
+    
+    
+
+
+    
+    /////////////////////////////////////////////////
+    /////// ORGANIZATION
+    
+    string public organizationName;
+    string public organizationShareSymbol;
+    string public organizationLogo;
+    string public organizationDescription;
     
     
     
+    
+    
+    
+    /////////////////////////////////////////////////
+    /////// CONSTRUCTOR FUNCTION
     
     // Test args:
-    // "Organization", "ORG", 1000, [1000000, 1000000, 1000000, 0], [1000000, 1000000, 1000000, 0]
+    // "Organization", "ORG", "", "This is a test organization.", 1000, [1000000, 1000000, 1000000, 0], [1000000, 1000000, 1000000, 0]
     
-    constructor(string _name, string _symbol, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _voteRulesToChangeVoteRules) public payable
+    constructor(string _name, string _symbol, string _logo, string _description, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _voteRulesToChangeVoteRules) public payable
     {
         require(_initialShares >= 1);
         
-        name = _name;
-        symbol = _symbol;
+        organizationName = _name;
+        organizationShareSymbol = _symbol;
+        organizationDescription = _description;
+        organizationLogo = _logo;
         
         defaultVoteRules.exists = true;
-        defaultVoteRules.voteFractionYesNeeded = _defaultVoteRules[0];
-        defaultVoteRules.voteFractionOfSharesNeeded_startAmount = _defaultVoteRules[1];
-        defaultVoteRules.voteFractionOfSharesNeeded_endAmount = _defaultVoteRules[2];
-        defaultVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
+        defaultVoteRules.votePermillageYesNeeded = _defaultVoteRules[0];
+        defaultVoteRules.votePermillageOfSharesNeeded_startAmount = _defaultVoteRules[1];
+        defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
+        defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
         
         VoteRules memory voteRulesToChangeVoteRules;
         voteRulesToChangeVoteRules.exists = true;
-        voteRulesToChangeVoteRules.voteFractionYesNeeded = _voteRulesToChangeVoteRules[0];
-        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_startAmount = _voteRulesToChangeVoteRules[1];
-        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_endAmount = _voteRulesToChangeVoteRules[2];
-        voteRulesToChangeVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRulesToChangeVoteRules[3];
+        voteRulesToChangeVoteRules.votePermillageYesNeeded = _voteRulesToChangeVoteRules[0];
+        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_startAmount = _voteRulesToChangeVoteRules[1];
+        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_endAmount = _voteRulesToChangeVoteRules[2];
+        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRulesToChangeVoteRules[3];
         
         addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = voteRulesToChangeVoteRules;
         addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = voteRulesToChangeVoteRules;
@@ -160,24 +223,46 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     function () payable external
     {
-        
+        uint256 dataLength = msg.data.length;
+        if (dataLength == 0)
+        {
+            address _etherTransferWithoutData_subcontract = etherTransferWithoutData_subcontract;
+            if (_etherTransferWithoutData_subcontract != 0x0)
+            {
+                require(_etherTransferWithoutData_subcontract.call.value(msg.value)() == true);
+            }
+            return;
+        }
+        else
+        {
+            bytes4 functionId;
+            functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
+            address subcontract = functionId_to_subcontract[functionId];
+            bytes memory data = msg.data;
+            
+            if (subcontract != 0x0)
+            {
+                require(subcontract.call.value(msg.value)(data) == true);
+            }
+            else
+            {
+                uint256 len = subcontractAddressesAndDataPatterns.length;
+                for (uint256 i=0; i<len; i++)
+                {
+                    SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
+                    if (sadp.subcontract != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
+                    {
+                        require(sadp.subcontract.call.value(msg.value)(data) == true);
+                        return;
+                    }
+                }
+                
+                // If no data patterns matched, revert the transaction.
+                revert();
+            }
+        }
     }
     
-    // ERC223
-    function tokenFallback(address, uint, bytes) external
-    {
-    }
-    
-    // ERC721
-    function onERC721Received(address, address, uint256, bytes) external pure returns(bytes4)
-    {
-        return bytes4(keccak256("onERC721Received(address,address,uint256,bytes)"));
-    }
-
-    // ERC777
-    function tokensReceived(address, address, address, uint256, bytes, bytes) external
-    {
-    }
     
     
     
@@ -192,23 +277,31 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     
     
+    
+    
     ///////////////////////////////////////////////////////
     ////// Voting rules from highest priority to lowest priority
     
     struct VoteRules
     {
         bool exists;
-        uint256 voteFractionYesNeeded;
-        uint256 voteFractionOfSharesNeeded_startAmount;
-        uint256 voteFractionOfSharesNeeded_endAmount;
-        uint256 voteFractionOfSharesNeeded_reductionPeriodSeconds;
+        uint256 votePermillageYesNeeded;
+        uint256 votePermillageOfSharesNeeded_startAmount;
+        uint256 votePermillageOfSharesNeeded_endAmount;
+        uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds;
+    }
+    
+    struct DataPatternAndVoteRules
+    {
+        DataPattern dataPattern;
+        VoteRules voteRules;
     }
     
     // Voting rules for transactions with a specific destination address and specific data pattern
     mapping(address => DataPatternAndVoteRules[]) public addressAndDataPattern_to_voteRules;
     
     // Voting rules for transactions to a specific address and specific function ID
-    // (this is a special optimize case of the one above)
+    // (this is an optimized form of the special case of the one above)
     mapping(bytes32 => VoteRules) public addressAndFunctionId_to_voteRules;
     
     // Voting rules for transactions to a specific address
@@ -227,16 +320,16 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     {
         if (voteRules.exists)
         {
-            require(voteRules.voteFractionYesNeeded <= MILLION);
-            require(voteRules.voteFractionOfSharesNeeded_startAmount <= MILLION);
-            require(voteRules.voteFractionOfSharesNeeded_endAmount <= MILLION);
-            if (voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds == 0)
+            require(voteRules.votePermillageYesNeeded <= 1000);
+            require(voteRules.votePermillageOfSharesNeeded_startAmount <= 1001);
+            require(voteRules.votePermillageOfSharesNeeded_endAmount <= 1001);
+            if (voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds == 0)
             {
-                require(voteRules.voteFractionOfSharesNeeded_startAmount == voteRules.voteFractionOfSharesNeeded_endAmount);
+                require(voteRules.votePermillageOfSharesNeeded_startAmount == voteRules.votePermillageOfSharesNeeded_endAmount);
             }
             else
             {
-                require(voteRules.voteFractionOfSharesNeeded_startAmount > voteRules.voteFractionOfSharesNeeded_endAmount);
+                require(voteRules.votePermillageOfSharesNeeded_startAmount > voteRules.votePermillageOfSharesNeeded_endAmount);
             }
         }
     }
@@ -289,46 +382,53 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         return defaultVoteRules;
     }
     
-    function _getVoteRulesOfProposal(uint256 _proposalIndex) public view returns (uint256 voteFractionYesNeeded, uint256 voteFractionOfSharesNeeded_startAmount, uint256 voteFractionOfSharesNeeded_endAmount, uint256 voteFractionOfSharesNeeded_reductionPeriodSeconds)
+    function getVoteRulesOfProposal(uint256 _proposalIndex) public view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
     {
         require(_proposalIndex < proposals.length);
         VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
         return (
-            voteRules.voteFractionYesNeeded,
-            voteRules.voteFractionOfSharesNeeded_startAmount,
-            voteRules.voteFractionOfSharesNeeded_endAmount,
-            voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds
+            voteRules.votePermillageYesNeeded,
+            voteRules.votePermillageOfSharesNeeded_startAmount,
+            voteRules.votePermillageOfSharesNeeded_endAmount,
+            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
         );
     }
     
     function _getVoteRulesOfProposal(Proposal storage proposal) private view returns (VoteRules memory)
     {
-        VoteRules memory voteRules;
-        voteRules.voteFractionYesNeeded = 0;
-        voteRules.voteFractionOfSharesNeeded_startAmount = 0;
-        voteRules.voteFractionOfSharesNeeded_endAmount = MILLION;
-        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = 0;
-        for (uint256 i=0; i<proposal.transactions.length; i++)
+        if (proposal.transactions.length == 0)
         {
-            VoteRules storage current = _getVoteRulesOfTransaction(proposal.transactions[i]);
-            if (current.voteFractionYesNeeded > voteRules.voteFractionYesNeeded)
-            {
-                voteRules.voteFractionYesNeeded = current.voteFractionYesNeeded;
-            }
-            if (current.voteFractionOfSharesNeeded_startAmount > voteRules.voteFractionOfSharesNeeded_startAmount)
-            {
-                voteRules.voteFractionOfSharesNeeded_startAmount = current.voteFractionOfSharesNeeded_startAmount;
-            }
-            if (current.voteFractionOfSharesNeeded_endAmount > voteRules.voteFractionOfSharesNeeded_endAmount)
-            {
-                voteRules.voteFractionOfSharesNeeded_endAmount = current.voteFractionOfSharesNeeded_endAmount;
-            }
-            if (current.voteFractionOfSharesNeeded_reductionPeriodSeconds > voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds)
-            {
-                voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = current.voteFractionOfSharesNeeded_reductionPeriodSeconds;
-            }
+            return defaultVoteRules;
         }
-        return voteRules;
+        else
+        {
+            VoteRules memory voteRules;
+            voteRules.votePermillageYesNeeded = 0;
+            voteRules.votePermillageOfSharesNeeded_startAmount = 0;
+            voteRules.votePermillageOfSharesNeeded_endAmount = 0;
+            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = 0;
+            for (uint256 i=0; i<proposal.transactions.length; i++)
+            {
+                VoteRules storage current = _getVoteRulesOfTransaction(proposal.transactions[i]);
+                if (current.votePermillageYesNeeded > voteRules.votePermillageYesNeeded)
+                {
+                    voteRules.votePermillageYesNeeded = current.votePermillageYesNeeded;
+                }
+                if (current.votePermillageOfSharesNeeded_startAmount > voteRules.votePermillageOfSharesNeeded_startAmount)
+                {
+                    voteRules.votePermillageOfSharesNeeded_startAmount = current.votePermillageOfSharesNeeded_startAmount;
+                }
+                if (current.votePermillageOfSharesNeeded_endAmount > voteRules.votePermillageOfSharesNeeded_endAmount)
+                {
+                    voteRules.votePermillageOfSharesNeeded_endAmount = current.votePermillageOfSharesNeeded_endAmount;
+                }
+                if (current.votePermillageOfSharesNeeded_reductionPeriodSeconds > voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds)
+                {
+                    voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = current.votePermillageOfSharesNeeded_reductionPeriodSeconds;
+                }
+            }
+            return voteRules;
+        }
     }
     
     
@@ -360,8 +460,8 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     enum ProposalStatus
     {
-        NOT_SUBMITTED,
-        SUBMITTED,
+        NON_EXISTANT,
+        VOTE_IN_PROGRESS,
         REJECTED,
         ACCEPTED
     }
@@ -373,6 +473,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         uint256 timeSubmitted;
         string description;
         Transaction[] transactions;
+        bool votesArePermanent;
         
         // Variables
         ProposalStatus status;
@@ -401,7 +502,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         proposal.submitter = msg.sender;
         proposal.timeSubmitted = block.timestamp;
         proposal.description = _description;
-        proposal.status = ProposalStatus.SUBMITTED;
+        proposal.status = ProposalStatus.VOTE_IN_PROGRESS;
         
         proposal.transactions.length = transactionDestinations.length;
         
@@ -447,7 +548,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         transaction.data = theData;
     }
     
-    function finalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
+    function tryFinalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
     {
         uint256 amount = _proposalIndices.length;
         finalizedProposalIndices = new uint256[](amount);
@@ -455,7 +556,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         for (uint256 i=0; i<amount; i++)
         {
             uint256 proposalIndex = _proposalIndices[i];
-            if (finalizeProposal(proposalIndex, _voters, _accept[i]))
+            if (tryFinalizeProposal(proposalIndex, _voters, _accept[i]))
             {
                 finalizedProposalIndices[amountFinalized] = proposalIndex;
                 amountFinalized++;
@@ -464,67 +565,71 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         assembly { mstore(finalizedProposalIndices, amountFinalized) }
     }
     
-    function finalizeProposal(uint256 _proposalIndex) public returns (bool finalized)
+    function tryFinalizeProposal(uint256 _proposalIndex) public returns (bool finalized)
     {
-        return finalizeProposal(_proposalIndex, new address[](0), false);
+        return tryFinalizeProposal(_proposalIndex, new address[](0), false);
     }
     
-    function finalizeProposal(uint256 _proposalIndex, address[] _voters, bool _acceptHint) public returns (bool finalized)
+    function tryFinalizeProposal(uint256 _proposalIndex, address[] _voters, bool _acceptHint) public returns (bool finalized)
     {
         uint256 startGas = gasleft();
 
         Proposal storage proposal = proposals[_proposalIndex];
         
-        if (proposal.status != ProposalStatus.SUBMITTED)
+        if (proposal.status != ProposalStatus.VOTE_IN_PROGRESS)
         {
             return false;
-        }
-        
-        VoteResult proposalVoteResult = checkProposalVoteResult(_proposalIndex, _voters, _acceptHint);
-        
-        if (proposalVoteResult == VoteResult.NOT_ENOUGH_VOTES)
-        {
-            return false;
-        }
-        else if (proposalVoteResult == VoteResult.READY_TO_ACCEPT)
-        {
-            if (_voters.length != 0 && !_acceptHint)
-            {
-                return false;
-            }
-            
-            proposal.status = ProposalStatus.ACCEPTED;
-
-            for (uint256 j=0; j<proposal.transactions.length; j++)
-            {
-                _executeTransaction(proposal.transactions[j]);
-            }
-            
-            if (organizationRefundsFees)
-            {
-                uint256 gasUsed = startGas - gasleft();
-                uint256 gasPrice = tx.gasprice <= maximumRefundedGasPrice ? tx.gasprice : maximumRefundedGasPrice;
-                uint256 txFeeRefund = gasUsed * gasPrice;
-                if (txFeeRefund > address(this).balance) txFeeRefund = address(this).balance;
-                msg.sender.transfer(txFeeRefund);
-            }
-            
-            return true;
-        }
-        else if (proposalVoteResult == VoteResult.READY_TO_REJECT)
-        {
-            if (_voters.length != 0 && _acceptHint)
-            {
-                return false;
-            }
-            
-            proposal.status = ProposalStatus.REJECTED;
-            
-            return true;
         }
         else
         {
-            revert();
+            VoteResult proposalVoteResult = computeProposalVoteResult(_proposalIndex, _voters, _acceptHint);
+            
+            if (proposalVoteResult == VoteResult.UNDECIDED)
+            {
+                return false;
+            }
+            else if (proposalVoteResult == VoteResult.READY_TO_ACCEPT)
+            {
+                if (_voters.length != 0 && !_acceptHint)
+                {
+                    return false;
+                }
+                else
+                {
+                    proposal.status = ProposalStatus.ACCEPTED;
+        
+                    for (uint256 j=0; j<proposal.transactions.length; j++)
+                    {
+                        _executeTransaction(proposal.transactions[j]);
+                    }
+                    
+                    if (organizationRefundsFees)
+                    {
+                        uint256 gasUsed = startGas - gasleft();
+                        uint256 gasPrice = tx.gasprice <= maximumRefundedGasPrice ? tx.gasprice : maximumRefundedGasPrice;
+                        uint256 txFeeRefund = gasUsed * gasPrice;
+                        if (txFeeRefund > address(this).balance) txFeeRefund = address(this).balance;
+                        msg.sender.transfer(txFeeRefund);
+                    }
+                    
+                    return true;
+                }
+            }
+            else if (proposalVoteResult == VoteResult.READY_TO_REJECT)
+            {
+                if (_voters.length != 0 && _acceptHint)
+                {
+                    return false;
+                }
+                
+                proposal.status = ProposalStatus.REJECTED;
+                
+                return true;
+            }
+            else
+            {
+                revert();
+            }
         }
     }
     
@@ -551,12 +656,12 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     enum VoteResult
     {
-        NOT_ENOUGH_VOTES,
+        UNDECIDED,
         READY_TO_REJECT,
         READY_TO_ACCEPT
     }
     
-    function checkProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
+    function computeProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
     {
         uint256 totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
         uint256 totalVotesCast = 0; // yes + no + active abstain
@@ -604,6 +709,13 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
                 totalVotesCast += votes;
                 yesVotes += votes;
             }
+            else if (voteStatus == VoteStatus.PASSIVE_ABSTAIN)
+            {
+            }
+            else
+            {
+                revert();
+            }
         }
         
         // If the organization itself has not voted with its own shares yet,
@@ -616,21 +728,21 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         // Select and load the voting rules we should obey when finalizing this proposal.
         VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
         
-        uint256 fractionOfSharesNeeded;
+        uint256 permillageOfSharesNeeded;
         
         // If we have passed the end of the reduction period...
-        if (block.timestamp - proposals[_proposalIndex].timeSubmitted >= voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds)
+        if (block.timestamp - proposals[_proposalIndex].timeSubmitted >= voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds)
         {
-            fractionOfSharesNeeded = voteRules.voteFractionOfSharesNeeded_endAmount;
+            permillageOfSharesNeeded = voteRules.votePermillageOfSharesNeeded_endAmount;
         }
         
         // If we are in the reduction period...
         else
         {
-            fractionOfSharesNeeded =
-                voteRules.voteFractionOfSharesNeeded_startAmount
+            permillageOfSharesNeeded =
+                voteRules.votePermillageOfSharesNeeded_startAmount
                 -
-                (voteRules.voteFractionOfSharesNeeded_startAmount - voteRules.voteFractionOfSharesNeeded_endAmount) * (block.timestamp - proposals[_proposalIndex].timeSubmitted) / voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds;
+                (voteRules.votePermillageOfSharesNeeded_startAmount - voteRules.votePermillageOfSharesNeeded_endAmount) * (block.timestamp - proposals[_proposalIndex].timeSubmitted) / voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds;
         }
         
         // If the voter list was externally supplied,
@@ -651,19 +763,19 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         
         // If not enough votes have been cast,
         // we should neither reject nor accept the proposal.
-        if ((totalVotesCast * MILLION / totalShares) < fractionOfSharesNeeded)
+        if ((totalVotesCast * 1000 / totalShares) < permillageOfSharesNeeded)
         {
-            return VoteResult.NOT_ENOUGH_VOTES;
+            return VoteResult.UNDECIDED;
         }
         
         // If there are enough yes votes to accept...
-        else if ((yesVotes * MILLION / (yesVotes + noVotes)) >= voteRules.voteFractionYesNeeded)
+        else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.votePermillageYesNeeded)
         {
             // If the accept hint does not match the result of the vote count,
             // we should neither reject nor acccept the proposal.
             if (externallySuppliedVoterList && _acceptHint == false)
             {
-                return VoteResult.NOT_ENOUGH_VOTES;
+                return VoteResult.UNDECIDED;
             }
             else
             {
@@ -678,7 +790,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
             // we should neither reject nor acccept the proposal.
             if (externallySuppliedVoterList && _acceptHint == true)
             {
-                return VoteResult.NOT_ENOUGH_VOTES;
+                return VoteResult.UNDECIDED;
             }
             else
             {
@@ -720,25 +832,46 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     {
         Proposal storage proposal = proposals[_proposalIndex];
         
-        // The proposal must be in the submitted stage.
-        require(proposal.status == ProposalStatus.SUBMITTED);
+        // The proposal must currently be votable
+        require(proposal.status == ProposalStatus.VOTE_IN_PROGRESS);
         
+        // Load the voter's current vote status
         VoteStatus currentVoteStatus = proposal.votes[msg.sender];
         
+        // If the voter already voted PERMANENT_YES or PERMANENT_NO, they can't change their vote.
         require(currentVoteStatus != VoteStatus.PERMANENT_NO && currentVoteStatus != VoteStatus.PERMANENT_YES);
-        require(_newVoteStatus != VoteStatus.NOT_VOTED_YET);
         
+        // Validate the new vote input
+        require(_newVoteStatus == VoteStatus.PERMANENT_YES ||
+                _newVoteStatus == VoteStatus.PERMANENT_NO ||
+                _newVoteStatus == VoteStatus.YES ||
+                _newVoteStatus == VoteStatus.NO ||
+                _newVoteStatus == VoteStatus.PASSIVE_ABSTAIN ||
+                _newVoteStatus == VoteStatus.ACTIVE_ABSTAIN);
+        
+        // If this proposal's votes are permanent, voters are not allowed to use
+        // the normal YES and NO. They must use PERMANENT_YES or PERMANENT_NO instead.
+        if (proposal.votesArePermanent)
+        {
+            require(_newVoteStatus != VoteStatus.YES && _newVoteStatus != VoteStatus.NO);
+        }
+        
+        // The voter must have at least 1 share to be able to vote.
         require(shareholder_to_shares[msg.sender] > 0);
-
+        
+        // Add the voter to the voters list, if they had not voted previously.
         if (currentVoteStatus == VoteStatus.NOT_VOTED_YET)
         {
             proposal.voters.push(msg.sender);
         }
+        
+        // Store the vote
         proposal.votes[msg.sender] = _newVoteStatus;
         
+        // If the voter wants to finalize the proposal immediately, try to do so.
         if (_tryFinalize)
         {
-            finalizeProposal(_proposalIndex);
+            tryFinalizeProposal(_proposalIndex);
         }
     }
     
@@ -754,6 +887,17 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function addSubcontract(address _subcontract) external
     {
         require(msg.sender == address(this));
+        
+        // The subcontract must be deployed before it is added.
+        // Shareholders need to know the code of the subcontract to be able to
+        // make an informed decision about whether or not to add it.
+        // This does not prevent a proposal to add it from being submitted before
+        // it is deployed, so the user interface should alert voters if the
+        // subcontract code is not known.
+        uint256 codeSize;
+        assembly { codeSize := extcodesize(_subcontract) }
+        require(codeSize > 0);
+        
         if (subcontract_to_arrayIndex[_subcontract] == 0)
         {
             subcontract_to_arrayIndex[_subcontract] = subcontracts.length;
@@ -765,6 +909,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     {
         require(msg.sender == address(this));
         require(_subcontract != address(this));
+        
         uint256 arrayIndex = subcontract_to_arrayIndex[_subcontract];
         if (arrayIndex != 0)
         {
@@ -779,14 +924,53 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         }
     }
     
+    function setFunctionIdSubcontract(bytes4 _functionId, address _subcontract) external
+    {
+        require(msg.sender == address(this));
+        
+        functionId_to_subcontract[_functionId] = _subcontract;
+    }
+    
+    function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontract, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
+    {
+        require(msg.sender == address(this));
+        
+        // If the array index is passed the end of the array, we increase the size of the array
+        if (_arrayIndex >= subcontractAddressesAndDataPatterns.length)
+        {
+            subcontractAddressesAndDataPatterns.length++;
+            require(_arrayIndex < subcontractAddressesAndDataPatterns.length);
+        }
+        
+        SubcontractAddressAndDataPattern storage slot = subcontractAddressesAndDataPatterns[_arrayIndex];
+        slot.subcontract = _subcontract;
+        slot.dataPattern.minimumLength = _dataMinimumLength;
+        slot.dataPattern.maximumLength = _dataMaximumLength;
+        slot.dataPattern.data = _dataPattern;
+        slot.dataPattern.mask = _dataMask;
+        
+        // If it's the last array element, we can decrease the size of the array
+        if (_subcontract == 0x0 && _arrayIndex == subcontractAddressesAndDataPatterns.length-1)
+        {
+            subcontractAddressesAndDataPatterns.length--;
+        }
+    }
+    
+    function setEtherTransferWithoutDataSubcontract(address _subcontract) external
+    {
+        require(msg.sender == address(this));
+        
+        etherTransferWithoutData_subcontract = _subcontract;
+    }
+    
     function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
     {
         require(msg.sender == address(this));
         
-        defaultVoteRules.voteFractionYesNeeded = _defaultVoteRules[0];
-        defaultVoteRules.voteFractionOfSharesNeeded_startAmount = _defaultVoteRules[1];
-        defaultVoteRules.voteFractionOfSharesNeeded_endAmount = _defaultVoteRules[2];
-        defaultVoteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
+        defaultVoteRules.votePermillageYesNeeded = _defaultVoteRules[0];
+        defaultVoteRules.votePermillageOfSharesNeeded_startAmount = _defaultVoteRules[1];
+        defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
+        defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
         
         _validateVoteRules(defaultVoteRules);
     }
@@ -794,13 +978,14 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function setAddressAndFunctionIdVoteRules(address _address, bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
+        
         bytes32 addressAndFunctionId = _packAddressAndFunctionId(_address, _functionId);
         VoteRules storage voteRules = addressAndFunctionId_to_voteRules[addressAndFunctionId];
         voteRules.exists = _exists;
-        voteRules.voteFractionYesNeeded = _voteRules[0];
-        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        voteRules.votePermillageYesNeeded = _voteRules[0];
+        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
         _validateVoteRules(voteRules);
     }
@@ -808,12 +993,13 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function setAddressVoteRules(address _address, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
+        
         VoteRules storage voteRules = address_to_voteRules[_address];
         voteRules.exists = _exists;
-        voteRules.voteFractionYesNeeded = _voteRules[0];
-        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        voteRules.votePermillageYesNeeded = _voteRules[0];
+        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
         _validateVoteRules(voteRules);
     }
@@ -821,12 +1007,13 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function setFunctionIdVoteRules(bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
+        
         VoteRules storage voteRules = functionId_to_voteRules[_functionId];
         voteRules.exists = _exists;
-        voteRules.voteFractionYesNeeded = _voteRules[0];
-        voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        voteRules.votePermillageYesNeeded = _voteRules[0];
+        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
         _validateVoteRules(voteRules);
     }
@@ -834,6 +1021,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function addAddressDataPatternVoteRules(address _address, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
+        
         addressAndDataPattern_to_voteRules[_address].length++;
         DataPatternAndVoteRules storage dataPatternAndVoteRules = addressAndDataPattern_to_voteRules[_address][dataPattern_to_voteRules.length-1];
         dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
@@ -841,10 +1029,10 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         dataPatternAndVoteRules.dataPattern.data = _dataPattern;
         dataPatternAndVoteRules.dataPattern.mask = _dataMask;
         dataPatternAndVoteRules.voteRules.exists = true;
-        dataPatternAndVoteRules.voteRules.voteFractionYesNeeded = _voteRules[0];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        dataPatternAndVoteRules.voteRules.votePermillageYesNeeded = _voteRules[0];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
         _validateVoteRules(dataPatternAndVoteRules.voteRules);
     }
@@ -852,12 +1040,14 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function deleteAddressDataPatternVoteRules(address _address, uint256 _index) external
     {
         require(msg.sender == address(this));
+        
         _deleteDataPatternAndVoteRulesFromArray(addressAndDataPattern_to_voteRules[_address], _index);
     }
     
     function addDataPatternVoteRules(uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
+        
         dataPattern_to_voteRules.length++;
         DataPatternAndVoteRules storage dataPatternAndVoteRules = dataPattern_to_voteRules[dataPattern_to_voteRules.length-1];
         dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
@@ -865,10 +1055,10 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
         dataPatternAndVoteRules.dataPattern.data = _dataPattern;
         dataPatternAndVoteRules.dataPattern.mask = _dataMask;
         dataPatternAndVoteRules.voteRules.exists = true;
-        dataPatternAndVoteRules.voteRules.voteFractionYesNeeded = _voteRules[0];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_startAmount = _voteRules[1];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_endAmount = _voteRules[2];
-        dataPatternAndVoteRules.voteRules.voteFractionOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        dataPatternAndVoteRules.voteRules.votePermillageYesNeeded = _voteRules[0];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
         _validateVoteRules(dataPatternAndVoteRules.voteRules);
     }
@@ -876,6 +1066,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function deleteDataPatternVoteRules(uint256 _index) external
     {
         require(msg.sender == address(this));
+        
         _deleteDataPatternAndVoteRulesFromArray(dataPattern_to_voteRules, _index);
     }
     
@@ -918,6 +1109,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function createShares(uint256 _amount) external
     {
         require(msg.sender == address(this));
+        
         totalShares += _amount;
         shareholder_to_shares[this] += _amount;
         emit Transfer(0x0, this, _amount);
@@ -927,6 +1119,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     {
         require(msg.sender == address(this));
         require(shareholder_to_shares[this] >= _amount);
+        
         totalShares -= _amount;
         shareholder_to_shares[this] -= _amount;
         emit Transfer(this, 0x0, _amount);
@@ -935,50 +1128,56 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function splitShares(uint256 _multiplier) external
     {
         require(msg.sender == address(this));
+        
         for (uint256 i=0; i<shareholders.length; i++)
         {
             address shareholder = shareholders[i];
             shareholder_to_shares[shareholder] *= _multiplier;
         }
+        totalShares *= _multiplier;
     }
     
-    function distributeEtherToShareholders(uint256 _weiAmount) external
+    function distributeEtherToAllShareholders(uint256 _totalAmount) external
     {
         require(msg.sender == address(this));
-        require(_weiAmount <= address(this).balance);
+        require(_totalAmount <= address(this).balance);
+        
         uint256 _totalShares = totalShares;
         uint256 _totalShareholders = shareholders.length;
         for (uint256 i=0; i<_totalShareholders; i++)
         {
             address shareholder = shareholders[i];
             uint256 shares = shareholder_to_shares[shareholder];
-            shareholder.transfer(_weiAmount * shares / _totalShares);
+            shareholder.transfer(_totalAmount * shares / _totalShares);
         }
     }
-    
+
     function distributeTokensToShareholders(address _tokenContract, uint256 _tokenAmount) external
     {
         require(msg.sender == address(this));
         require(_tokenAmount <= ERC20(_tokenContract).balanceOf(this));
+        
         uint256 _totalShares = totalShares;
         uint256 _totalShareholders = shareholders.length;
         for (uint256 i=0; i<_totalShareholders; i++)
         {
             address shareholder = shareholders[i];
             uint256 shares = shareholder_to_shares[shareholder];
-            ERC20(_tokenContract).transfer(shareholder, _tokenAmount * shares / _totalShares);
+            require(ERC20(_tokenContract).transfer(shareholder, _tokenAmount * shares / _totalShares) == true);
         }
     }
     
     function subcontractExecuteCall(address _destination, uint256 _value, bytes _data) external returns (bool _success)
     {
         require(subcontract_to_arrayIndex[msg.sender] != 0);
+        
         return _destination.call.value(_value)(_data) == true;
     }
     
     function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice) external
     {
         require(msg.sender == address(this));
+        
         organizationRefundsFees = _organizationRefundsFees;
         maximumRefundedGasPrice = _maximumRefundedGasPrice;
     }
@@ -1020,8 +1219,28 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     function _transferShares(address _from, address _to, uint256 _amount, bool _callTokenFallback, bytes memory _data) private
     {
         require(shareholder_to_shares[_from] >= _amount);
+        
         shareholder_to_shares[_from] -= _amount;
         shareholder_to_shares[_to] += _amount;
+        
+        //// Update the shareholders array
+        
+        // If the _from address now has 0 shares, remove it from the shareholders list.
+        if (_from != address(this) && shareholder_to_shares[_from] == 0 && shareholder_to_arrayIndex[_from] != 0)
+        {
+            shareholders[shareholder_to_arrayIndex[_from]] = shareholders[shareholders.length-1];
+            shareholders.length--;
+            shareholder_to_arrayIndex[_from] = 0;
+        }
+        
+        // If the _to address now has >0 shares but is not in the shareholders list, add it.
+        if (shareholder_to_shares[_to] != 0 && shareholder_to_arrayIndex[_to] == 0)
+        {
+            shareholder_to_arrayIndex[_to] = shareholders.length;
+            shareholders.push(_to);
+        }
+        
+        // If we are sending shares to a smart contract, call its tokenFallback function.
         if (_callTokenFallback)
         {
             uint256 codeLength;
@@ -1037,11 +1256,17 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     
     function transfer(address _to, uint256 _amount) external returns (bool)
     {
-        _transferShares(msg.sender, _to, _amount, true, "");
+        _transferShares(msg.sender, _to, _amount, false, "");
         return true;
     }
     
     function transfer(address _to, uint256 _amount, bytes _data) external returns (bool)
+    {
+        _transferShares(msg.sender, _to, _amount, true, _data);
+        return true;
+    }
+    
+    function transferAndCall(address _to, uint256 _amount, bytes _data) external returns (bool)
     {
         _transferShares(msg.sender, _to, _amount, true, _data);
         return true;
@@ -1076,6 +1301,14 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient
     {
         shareholder_to_spender_to_approvedAmount[msg.sender][_spender] = _amount;
         emit Approval(msg.sender, _spender, shareholder_to_spender_to_approvedAmount[msg.sender][_spender]);
+        return true;
+    }
+    
+    function approveAndCall(address _spender, uint256 _amount, bytes _data) external returns (bool)
+    {
+        shareholder_to_spender_to_approvedAmount[msg.sender][_spender] = _amount;
+        emit Approval(msg.sender, _spender, shareholder_to_spender_to_approvedAmount[msg.sender][_spender]);
+        TokenApprovalReceiver(_spender).receiveApproval(msg.sender, _amount, address(this), _data);
         return true;
     }
 }
