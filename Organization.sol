@@ -227,6 +227,10 @@ contract Organization is ERC20
     
     function () payable external
     {
+        // If an unknown function is called on this organization contract,
+        // try to find a matching subcontract definition.
+        // If we can find one, execute it. Otherwise, revert the transaction.
+        
         uint256 dataLength = msg.data.length;
         Subcontract memory subcontract;
         if (dataLength == 0)
@@ -242,11 +246,6 @@ contract Organization is ERC20
                 // If a subcontract has been defined for ether transfers without data,
                 // execute it.
                 subcontract = etherTransferWithoutData_subcontract;
-                /*address _etherTransferWithoutData_subcontract = etherTransferWithoutData_subcontract.contractAddress;
-                if (_etherTransferWithoutData_subcontract != 0x0)
-                {
-                    require(_etherTransferWithoutData_subcontract.call.value(msg.value)() == true);
-                }*/
             }
         }
         else
@@ -268,15 +267,19 @@ contract Organization is ERC20
                     if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
                     {
                         subcontract = sadp.subcontract;
+                        break;
                     }
                 }
             }
         }
         
+        // If we could not find a matching subcontract definition, revert the transaction.
         if (subcontract.contractAddress == 0x0)
         {
             revert();
         }
+        
+        // If we found a matching subcontract definition, forward the function call to the subcontract.
         else
         {
             require(subcontract.contractAddress.call.value(subcontract.shouldForwardEther ? msg.value : 0)(data) == true);
@@ -400,18 +403,6 @@ contract Organization is ERC20
         
         // defaultVoteRules
         return defaultVoteRules;
-    }
-    
-    function getVoteRulesOfProposal(uint256 _proposalIndex) public view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
-    {
-        require(_proposalIndex < proposals.length);
-        VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
-        return (
-            voteRules.votePermillageYesNeeded,
-            voteRules.votePermillageOfSharesNeeded_startAmount,
-            voteRules.votePermillageOfSharesNeeded_endAmount,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
-        );
     }
     
     function _getVoteRulesOfProposal(Proposal storage proposal) private view returns (VoteRules memory)
@@ -1245,7 +1236,17 @@ contract Organization is ERC20
         return addressAndDataPattern_to_voteRules[_address].length;
     }
     
-    
+    function getVoteRulesOfProposal(uint256 _proposalIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
+    {
+        require(_proposalIndex < proposals.length);
+        VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
+        return (
+            voteRules.votePermillageYesNeeded,
+            voteRules.votePermillageOfSharesNeeded_startAmount,
+            voteRules.votePermillageOfSharesNeeded_endAmount,
+            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
+        );
+    }
     
     
     
