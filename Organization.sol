@@ -30,7 +30,7 @@ interface TokenApprovalReceiver
     function receiveApproval(address _from, uint _value, address _token, bytes _extraData) external;
 }
 
-contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenApprovalReceiver
+contract Organization is ERC20
 {
     /////////////////////////////////////////////////
     /////// DATA PATTERN
@@ -101,11 +101,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
 
     mapping(address => uint256) public shareholder_to_arrayIndex;
     address[] public shareholders;
-    
-    function amountOfShareholders() external view returns (uint256)
-    {
-        return shareholders.length;
-    }
+
     
     
     
@@ -117,19 +113,27 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     mapping(address => uint256) public subcontract_to_arrayIndex;
     address[] public subcontracts;
     
-    address public etherTransferWithoutData_subcontract;
-    mapping(bytes4 => address) public functionId_to_subcontract;
+    Subcontract public etherTransferWithoutData_subcontract;
+    mapping(bytes4 => Subcontract) public functionId_to_subcontract;
     SubcontractAddressAndDataPattern[] public subcontractAddressesAndDataPatterns;
+    
+    struct Subcontract
+    {
+        address contractAddress;
+        bool shouldForwardEther;
+    }
     
     struct SubcontractAddressAndDataPattern
     {
-        address subcontract;
+        Subcontract subcontract;
         DataPattern dataPattern;
     }
     
-    function amountOfSubcontracts() external view returns (uint256)
+    function subcontractExecuteCall(address _destination, uint256 _value, bytes _data) external returns (bool _success)
     {
-        return subcontracts.length;
+        require(subcontract_to_arrayIndex[msg.sender] != 0);
+        
+        return _destination.call.value(_value)(_data) == true;
     }
     
     
@@ -224,25 +228,36 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     function () payable external
     {
         uint256 dataLength = msg.data.length;
+        Subcontract memory subcontract;
         if (dataLength == 0)
         {
-            address _etherTransferWithoutData_subcontract = etherTransferWithoutData_subcontract;
-            if (_etherTransferWithoutData_subcontract != 0x0)
+            if (msg.value == 0)
             {
-                require(_etherTransferWithoutData_subcontract.call.value(msg.value)() == true);
+                // If the orgnization receives an empty transactions (no data and no ether),
+                // we don't have to do anything.
+                return;
             }
-            return;
+            else
+            {
+                // If a subcontract has been defined for ether transfers without data,
+                // execute it.
+                subcontract = etherTransferWithoutData_subcontract;
+                /*address _etherTransferWithoutData_subcontract = etherTransferWithoutData_subcontract.contractAddress;
+                if (_etherTransferWithoutData_subcontract != 0x0)
+                {
+                    require(_etherTransferWithoutData_subcontract.call.value(msg.value)() == true);
+                }*/
+            }
         }
         else
         {
             bytes4 functionId;
             functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
-            address subcontract = functionId_to_subcontract[functionId];
             bytes memory data = msg.data;
             
-            if (subcontract != 0x0)
+            if (functionId_to_subcontract[functionId].contractAddress != 0x0)
             {
-                require(subcontract.call.value(msg.value)(data) == true);
+                subcontract = functionId_to_subcontract[functionId];
             }
             else
             {
@@ -250,16 +265,21 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
                 for (uint256 i=0; i<len; i++)
                 {
                     SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
-                    if (sadp.subcontract != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
+                    if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
                     {
-                        require(sadp.subcontract.call.value(msg.value)(data) == true);
-                        return;
+                        subcontract = sadp.subcontract;
                     }
                 }
-                
-                // If no data patterns matched, revert the transaction.
-                revert();
             }
+        }
+        
+        if (subcontract.contractAddress == 0x0)
+        {
+            revert();
+        }
+        else
+        {
+            require(subcontract.contractAddress.call.value(subcontract.shouldForwardEther ? msg.value : 0)(data) == true);
         }
     }
     
@@ -339,11 +359,11 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         bytes4 functionId = 0x00000000;
         if (transaction.data.length >= 4)
         {
-        functionId =
-            (bytes4(transaction.data[0]) >>  0) |
-            (bytes4(transaction.data[1]) >>  8) |
-            (bytes4(transaction.data[2]) >> 16) |
-            (bytes4(transaction.data[3]) >> 24);
+            functionId =
+                (bytes4(transaction.data[0]) >>  0) |
+                (bytes4(transaction.data[1]) >>  8) |
+                (bytes4(transaction.data[2]) >> 16) |
+                (bytes4(transaction.data[3]) >> 24);
         }
         
         // destinationAddressAndDataPattern_to_voteRules
@@ -438,6 +458,8 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     ///////////////////////////////////////////////////////
     ////// Transaction
     
+    // A transaction is a component of a proposal.
+    
     struct Transaction
     {
         address destination;
@@ -462,6 +484,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     {
         NON_EXISTANT,
         VOTE_IN_PROGRESS,
+        EXPIRED,
         REJECTED,
         ACCEPTED
     }
@@ -471,6 +494,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         // Constants
         address submitter;
         uint256 timeSubmitted;
+        uint256 expireAfterSeconds;
         string description;
         Transaction[] transactions;
         bool votesArePermanent;
@@ -491,8 +515,26 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     }
     
     // Test args
-    // "Test proposal. blablabla", ["0x1111111111111111111111111111111111111111"], [12321], [0], [], true, true
-    function submitProposal(string _description, address[] transactionDestinations, uint256[] transactionValues, uint256[] transactionDataLengths, bytes transactionDatas, SubmitProposal_Extras extras) external
+    /*
+        "Test proposal. blablabla",
+        false,
+        1000,
+        ["0x1111111111111111111111111111111111111111"],
+        [12321],
+        [0],
+        [],
+        0
+    */
+    function submitProposal(
+        string _description,
+        bool _votesArePermanent,
+        uint256 _expireAfterSeconds,
+        address[] transactionDestinations,
+        uint256[] transactionValues,
+        uint256[] transactionDataLengths,
+        bytes transactionDatas,
+        SubmitProposal_Extras extras
+    ) external
     {
         require(transactionDestinations.length == transactionValues.length && transactionValues.length == transactionDataLengths.length);
         
@@ -503,22 +545,26 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         proposal.timeSubmitted = block.timestamp;
         proposal.description = _description;
         proposal.status = ProposalStatus.VOTE_IN_PROGRESS;
-        
+        proposal.votesArePermanent = _votesArePermanent;
+        proposal.expireAfterSeconds = _expireAfterSeconds;
         proposal.transactions.length = transactionDestinations.length;
         
-        uint256 dataPos;
-        uint256 i;
+        _submitNewProposal_part_copyAllTransactionData(proposal, transactionDestinations, transactionValues, transactionDataLengths, transactionDatas);
         
-        dataPos = 0;
-        for (i=0; i<transactionDataLengths.length; i++)
+        if (extras == SubmitProposal_Extras.VOTE_YES)
         {
-            dataPos += transactionDataLengths[i];
+            vote(proposals.length-1, VoteStatus.YES, false);
         }
-        
-        require(dataPos == transactionDatas.length);
-        
-        dataPos = 0;
-        for (i=0; i<transactionDestinations.length; i++)
+        else if (extras == SubmitProposal_Extras.VOTE_YES_AND_FINALIZE)
+        {
+            vote(proposals.length-1, VoteStatus.YES, true);
+        }
+    }
+    
+    function _submitNewProposal_part_copyAllTransactionData(Proposal storage proposal, address[] transactionDestinations, uint256[] memory transactionValues, uint256[] transactionDataLengths, bytes memory transactionDatas) private
+    {
+        uint256 dataPos = 0;
+        for (uint256 i=0; i<transactionDestinations.length; i++)
         {
             Transaction storage transaction = proposal.transactions[i];
             transaction.destination = transactionDestinations[i];
@@ -527,14 +573,7 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
             dataPos += transactionDataLengths[i];
         }
         
-        if (extras >= SubmitProposal_Extras.VOTE_YES)
-        {
-            vote(
-                proposals.length-1,
-                VoteStatus.YES,
-                extras == SubmitProposal_Extras.VOTE_YES_AND_FINALIZE
-            );
-        }
+        require(dataPos == transactionDatas.length);
     }
     
     function _submitNewProposal_part_copyTransactionData(Transaction storage transaction, uint256 length, bytes allData, uint256 startPos) private
@@ -546,23 +585,6 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
             startPos++;
         }
         transaction.data = theData;
-    }
-    
-    function tryFinalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
-    {
-        uint256 amount = _proposalIndices.length;
-        finalizedProposalIndices = new uint256[](amount);
-        uint256 amountFinalized = 0;
-        for (uint256 i=0; i<amount; i++)
-        {
-            uint256 proposalIndex = _proposalIndices[i];
-            if (tryFinalizeProposal(proposalIndex, _voters, _accept[i]))
-            {
-                finalizedProposalIndices[amountFinalized] = proposalIndex;
-                amountFinalized++;
-            }
-        }
-        assembly { mstore(finalizedProposalIndices, amountFinalized) }
     }
     
     function tryFinalizeProposal(uint256 _proposalIndex) public returns (bool finalized)
@@ -579,6 +601,12 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         if (proposal.status != ProposalStatus.VOTE_IN_PROGRESS)
         {
             return false;
+        }
+        else if (proposal.timeSubmitted + proposal.expireAfterSeconds < block.timestamp)
+        {
+            proposal.status = ProposalStatus.EXPIRED;
+            
+            return true;
         }
         else
         {
@@ -621,10 +649,12 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
                 {
                     return false;
                 }
-                
-                proposal.status = ProposalStatus.REJECTED;
-                
-                return true;
+                else
+                {
+                    proposal.status = ProposalStatus.REJECTED;
+                    
+                    return true;
+                }
             }
             else
             {
@@ -818,16 +848,6 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         }
     }
     
-    function voteMultiple(uint256[] _proposalIndices, VoteStatus[] _newVoteStatuses, bool[] _tryFinalize) public
-    {
-        require(_proposalIndices.length == _newVoteStatuses.length && _proposalIndices.length == _tryFinalize.length);
-        uint256 amount = _proposalIndices.length;
-        for (uint256 i=0; i<amount; i++)
-        {
-            vote(_proposalIndices[i], _newVoteStatuses[i], _tryFinalize[i]);
-        }
-    }
-    
     function vote(uint256 _proposalIndex, VoteStatus _newVoteStatus, bool _tryFinalize) public
     {
         Proposal storage proposal = proposals[_proposalIndex];
@@ -884,6 +904,8 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
     /////////////////////////////////////
     ////// Special functions
     
+    // These functions can only be executed by the organization on itself via a proposal.
+
     function addSubcontract(address _subcontract) external
     {
         require(msg.sender == address(this));
@@ -924,14 +946,15 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         }
     }
     
-    function setFunctionIdSubcontract(bytes4 _functionId, address _subcontract) external
+    function setFunctionIdSubcontract(bytes4 _functionId, address _subcontractAddress, bool _shouldForwardEther) external
     {
         require(msg.sender == address(this));
         
-        functionId_to_subcontract[_functionId] = _subcontract;
+        functionId_to_subcontract[_functionId].contractAddress = _subcontractAddress;
+        functionId_to_subcontract[_functionId].shouldForwardEther = _shouldForwardEther;
     }
     
-    function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontract, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
+    function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontractAddress, bool _shouldForwardEther, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
     {
         require(msg.sender == address(this));
         
@@ -943,24 +966,26 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         }
         
         SubcontractAddressAndDataPattern storage slot = subcontractAddressesAndDataPatterns[_arrayIndex];
-        slot.subcontract = _subcontract;
+        slot.subcontract.contractAddress = _subcontractAddress;
+        slot.subcontract.shouldForwardEther = _shouldForwardEther;
         slot.dataPattern.minimumLength = _dataMinimumLength;
         slot.dataPattern.maximumLength = _dataMaximumLength;
         slot.dataPattern.data = _dataPattern;
         slot.dataPattern.mask = _dataMask;
         
         // If it's the last array element, we can decrease the size of the array
-        if (_subcontract == 0x0 && _arrayIndex == subcontractAddressesAndDataPatterns.length-1)
+        if (_subcontractAddress == 0x0 && _arrayIndex == subcontractAddressesAndDataPatterns.length-1)
         {
             subcontractAddressesAndDataPatterns.length--;
         }
     }
     
-    function setEtherTransferWithoutDataSubcontract(address _subcontract) external
+    function setEtherTransferWithoutDataSubcontract(address _subcontractAddress, bool _shouldForwardEther) external
     {
         require(msg.sender == address(this));
         
-        etherTransferWithoutData_subcontract = _subcontract;
+        etherTransferWithoutData_subcontract.contractAddress = _subcontractAddress;
+        etherTransferWithoutData_subcontract.shouldForwardEther = _shouldForwardEther;
     }
     
     function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
@@ -1167,19 +1192,107 @@ contract Organization is ERC20, ERC223Receiver, ERC777TokensRecipient, TokenAppr
         }
     }
     
-    function subcontractExecuteCall(address _destination, uint256 _value, bytes _data) external returns (bool _success)
-    {
-        require(subcontract_to_arrayIndex[msg.sender] != 0);
-        
-        return _destination.call.value(_value)(_data) == true;
-    }
-    
     function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice) external
     {
         require(msg.sender == address(this));
         
         organizationRefundsFees = _organizationRefundsFees;
         maximumRefundedGasPrice = _maximumRefundedGasPrice;
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    ////////////////////////////
+    ////// View functions
+    
+    // These functions can help user interfaces or other contracts
+    // to fetch information more easily.
+        
+    function amountOfShareholders() external view returns (uint256)
+    {
+        return shareholders.length;
+    }
+    
+    function getAllShareholders() external view returns (address[] memory)
+    {
+        return shareholders;
+    }
+    
+    function amountOfSubcontracts() external view returns (uint256)
+    {
+        return subcontracts.length;
+    }
+    
+    function getAllSubcontracts() external view returns (address[] memory)
+    {
+        return subcontracts;
+    }
+    
+    function lengthOf_dataPattern_to_voteRules() external view returns (uint256)
+    {
+        return dataPattern_to_voteRules.length;
+    }
+    
+    function lengthOf_addressAndDataPattern_to_voteRules(address _address) external view returns (uint256)
+    {
+        return addressAndDataPattern_to_voteRules[_address].length;
+    }
+    
+    
+    
+    
+    
+    
+    
+    
+    /////////////////////////////////////
+    ////// Wrapper functions
+    
+    // These functions can make things easier by having fewer parameters,
+    // or by allowing batch execution in one function call.
+    
+    function voteMultiple(uint256[] _proposalIndices, VoteStatus[] _newVoteStatuses, bool[] _tryFinalize) public
+    {
+        require(_proposalIndices.length == _newVoteStatuses.length && _proposalIndices.length == _tryFinalize.length);
+        uint256 amount = _proposalIndices.length;
+        for (uint256 i=0; i<amount; i++)
+        {
+            vote(_proposalIndices[i], _newVoteStatuses[i], _tryFinalize[i]);
+        }
+    }
+    
+    function tryFinalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
+    {
+        uint256 amount = _proposalIndices.length;
+        finalizedProposalIndices = new uint256[](amount);
+        uint256 amountFinalized = 0;
+        for (uint256 i=0; i<amount; i++)
+        {
+            uint256 proposalIndex = _proposalIndices[i];
+            if (tryFinalizeProposal(proposalIndex, _voters, _accept[i]))
+            {
+                finalizedProposalIndices[amountFinalized] = proposalIndex;
+                amountFinalized++;
+            }
+        }
+        assembly { mstore(finalizedProposalIndices, amountFinalized) }
+    }
+    
+    function finalizeProposal(uint256 _proposalIndex) external
+    {
+        require(tryFinalizeProposal(_proposalIndex));
+    }
+    
+    function finalizeProposal(uint256 _proposalIndex, address[] _voters, bool _acceptHint) external
+    {
+        require(tryFinalizeProposal(_proposalIndex, _voters, _acceptHint));
     }
     
     
