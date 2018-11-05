@@ -109,9 +109,19 @@ contract Organization is ERC20
     
     /////////////////////////////////////////////////
     /////// SUBCONTRACTS
+    
+    
+    // Subcontracts can have full or partial power of attorney over this organization.
+    // They are able to perform any action on the organzation's behalf.
+    // A subcontract's abilities can be and in most cases should be
+    // limited by its source code.
 
     mapping(address => uint256) public subcontract_to_arrayIndex;
     address[] public subcontracts;
+    
+    
+    // Based on these three state variables, transactions to this
+    // organization can be automatically forwarded to a subcontract.
     
     Subcontract public etherTransferWithoutData_subcontract;
     mapping(bytes4 => Subcontract) public functionId_to_subcontract;
@@ -120,7 +130,19 @@ contract Organization is ERC20
     struct Subcontract
     {
         address contractAddress;
-        bool shouldForwardEther;
+        uint256 etherForwardingSetting;
+        // etherForwardingSetting meaning:
+        //    0:  Don't forward ether     Don't set ether amount in message data
+        //    1:  Forward ether           Don't set ether amount in message data
+        //    2:  Invalid
+        //    3:  Invalid
+        // >= 4:  Don't forward ether     Set ether amount in message data at the specified byte index
+        
+        uint256 sourceAddressForwardingSetting;
+        // sourceAddressPassingSetting meaning:
+        //    0:  Don't pass source address
+        //  1-3:  Invalid
+        // >= 4:  Pass source address at the specified byte index
     }
     
     struct SubcontractAddressAndDataPattern
@@ -132,6 +154,7 @@ contract Organization is ERC20
     function subcontractExecuteCall(address _destination, uint256 _value, bytes _data) external returns (bool _success)
     {
         require(subcontract_to_arrayIndex[msg.sender] != 0);
+        require(msg.sender != address(this));
         
         return _destination.call.value(_value)(_data) == true;
     }
@@ -212,6 +235,8 @@ contract Organization is ERC20
         shareholders.push(msg.sender);
         shareholder_to_shares[msg.sender] = _initialShares;
         shareholder_to_arrayIndex[msg.sender] = 1;
+        
+        emit Transfer(0x0, msg.sender, _initialShares);
 
         subcontracts.push(this);
         subcontract_to_arrayIndex[this] = 0;
@@ -227,62 +252,87 @@ contract Organization is ERC20
     
     function () payable external
     {
-        // If an unknown function is called on this organization contract,
-        // try to find a matching subcontract definition.
-        // If we can find one, execute it. Otherwise, revert the transaction.
-        
-        uint256 dataLength = msg.data.length;
-        Subcontract memory subcontract;
-        if (dataLength == 0)
+        if (dataLength == 0 && msg.value == 0)
         {
-            if (msg.value == 0)
-            {
-                // If the orgnization receives an empty transactions (no data and no ether),
-                // we don't have to do anything.
-                return;
-            }
-            else
+            // If the orgnization receives an empty transaction (no data and no ether),
+            // we don't have to do anything.
+        }
+        else
+        {
+            // If an unknown function is called on this organization contract,
+            // try to find a matching subcontract definition.
+            // If we can find one, execute it. Otherwise, revert the transaction.
+            
+            uint256 i;
+            uint256 dataLength = msg.data.length;
+            Subcontract memory subcontract;
+            
+            bytes memory data = msg.data;
+            
+            if (dataLength == 0)
             {
                 // If a subcontract has been defined for ether transfers without data,
                 // execute it.
                 subcontract = etherTransferWithoutData_subcontract;
             }
-        }
-        else
-        {
-            bytes4 functionId;
-            functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
-            bytes memory data = msg.data;
-            
-            if (functionId_to_subcontract[functionId].contractAddress != 0x0)
-            {
-                subcontract = functionId_to_subcontract[functionId];
-            }
             else
             {
-                uint256 len = subcontractAddressesAndDataPatterns.length;
-                for (uint256 i=0; i<len; i++)
+                bytes4 functionId;
+                functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
+                
+                if (functionId_to_subcontract[functionId].contractAddress != 0x0)
                 {
-                    SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
-                    if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
+                    subcontract = functionId_to_subcontract[functionId];
+                }
+                else
+                {
+                    uint256 len = subcontractAddressesAndDataPatterns.length;
+                    for (i=0; i<len; i++)
                     {
-                        subcontract = sadp.subcontract;
-                        break;
+                        SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
+                        if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
+                        {
+                            subcontract = sadp.subcontract;
+                            break;
+                        }
                     }
                 }
             }
-        }
-        
-        // If we could not find a matching subcontract definition, revert the transaction.
-        if (subcontract.contractAddress == 0x0)
-        {
-            revert();
-        }
-        
-        // If we found a matching subcontract definition, forward the function call to the subcontract.
-        else
-        {
-            require(subcontract.contractAddress.call.value(subcontract.shouldForwardEther ? msg.value : 0)(data) == true);
+            
+            // If we could not find a matching subcontract definition, revert the transaction.
+            if (subcontract.contractAddress == 0x0)
+            {
+                revert();
+            }
+            
+            // If we found a matching subcontract definition, forward the function call to the subcontract.
+            else
+            {
+                uint256 _etherForwardingSetting = subcontract.etherForwardingSetting;
+                if (_etherForwardingSetting >= 4)
+                {
+                    bytes32 _src = bytes32(uint256(msg.value));
+                    for (i=0; i<32; i++)
+                    {
+                        data[_etherForwardingSetting] = _src[i];
+                        _etherForwardingSetting++;
+                    }
+                }
+                
+                uint256 _sourceAddressForwardingSetting = subcontract.sourceAddressForwardingSetting;
+                if (_sourceAddressForwardingSetting >= 4)
+                {
+                    _src = bytes32(uint256(uint160(msg.sender)));
+                    for (i=0; i<32; i++)
+                    {
+                        data[_sourceAddressForwardingSetting] = _src[i];
+                        _sourceAddressForwardingSetting++;
+                    }
+                }
+                
+                
+                require(subcontract.contractAddress.call.value((_etherForwardingSetting == 1) ? msg.value : 0)(data) == true);
+            }
         }
     }
     
@@ -294,7 +344,30 @@ contract Organization is ERC20
     ///////////////////////////////////////////////////////
     ////// Communication
     
-    event Message(address indexed _from, address indexed _to, bool _encrypted, string _message, bytes32 indexed _relatedProposalIndex);
+    event Message(bytes32 indexed _hash, address indexed _from, address indexed _to, string _message, bool _isEncrypted);
+    event MessageResponse(bytes32 indexed _message, bytes32 indexed _responseToMessage, uint256 indexed _responseToProposal);
+    
+    function sendMessage(address _to, string _message, bool _isEncrypted, uint256 _responseToProposal, bytes32 _responseToMessage) external
+    {
+        require(_responseToProposal == uint256(-1) || _responseToProposal < proposals.length);
+        
+        bytes32 hash = keccak256(abi.encodePacked(msg.sender, _to, _message, _isEncrypted, _responseToProposal, block.timestamp));
+        
+        emit Message(hash, msg.sender, _to, _message, _isEncrypted);
+        
+        if (_responseToProposal != uint256(-1) || _responseToMessage != 0x0)
+        {
+            emit MessageResponse(hash, _responseToMessage, _responseToProposal);
+        }
+    }
+    
+    event MessageVote(bytes32 indexed _message, address indexed _voter, uint256 _vote);
+    
+    function voteMessage(bytes32 _message, uint256 _vote) external
+    {
+        emit MessageVote(_message, msg.sender, _vote);
+    }
+    
     
     
     
@@ -911,6 +984,7 @@ contract Organization is ERC20
         assembly { codeSize := extcodesize(_subcontract) }
         require(codeSize > 0);
         
+        // Add the subcontract to the subcontracts array, if it isn't already in it.
         if (subcontract_to_arrayIndex[_subcontract] == 0)
         {
             subcontract_to_arrayIndex[_subcontract] = subcontracts.length;
@@ -921,6 +995,8 @@ contract Organization is ERC20
     function removeSubcontract(address _subcontract) external
     {
         require(msg.sender == address(this));
+        
+        // You cannot remove the organization itself.
         require(_subcontract != address(this));
         
         uint256 arrayIndex = subcontract_to_arrayIndex[_subcontract];
@@ -937,15 +1013,16 @@ contract Organization is ERC20
         }
     }
     
-    function setFunctionIdSubcontract(bytes4 _functionId, address _subcontractAddress, bool _shouldForwardEther) external
+    function setFunctionIdSubcontract(bytes4 _functionId, address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
     {
         require(msg.sender == address(this));
         
         functionId_to_subcontract[_functionId].contractAddress = _subcontractAddress;
-        functionId_to_subcontract[_functionId].shouldForwardEther = _shouldForwardEther;
+        functionId_to_subcontract[_functionId].etherForwardingSetting = _etherForwardingSetting;
+        functionId_to_subcontract[_functionId].sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
     }
     
-    function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontractAddress, bool _shouldForwardEther, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
+    function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
     {
         require(msg.sender == address(this));
         
@@ -958,7 +1035,8 @@ contract Organization is ERC20
         
         SubcontractAddressAndDataPattern storage slot = subcontractAddressesAndDataPatterns[_arrayIndex];
         slot.subcontract.contractAddress = _subcontractAddress;
-        slot.subcontract.shouldForwardEther = _shouldForwardEther;
+        slot.subcontract.etherForwardingSetting = _etherForwardingSetting;
+        slot.subcontract.sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
         slot.dataPattern.minimumLength = _dataMinimumLength;
         slot.dataPattern.maximumLength = _dataMaximumLength;
         slot.dataPattern.data = _dataPattern;
@@ -971,12 +1049,13 @@ contract Organization is ERC20
         }
     }
     
-    function setEtherTransferWithoutDataSubcontract(address _subcontractAddress, bool _shouldForwardEther) external
+    function setEtherTransferWithoutDataSubcontract(address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
     {
         require(msg.sender == address(this));
         
         etherTransferWithoutData_subcontract.contractAddress = _subcontractAddress;
-        etherTransferWithoutData_subcontract.shouldForwardEther = _shouldForwardEther;
+        etherTransferWithoutData_subcontract.etherForwardingSetting = _etherForwardingSetting;
+        etherTransferWithoutData_subcontract.sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
     }
     
     function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
@@ -1191,6 +1270,34 @@ contract Organization is ERC20
         maximumRefundedGasPrice = _maximumRefundedGasPrice;
     }
     
+    function setOrganizationName(string _newOrganizationName) external
+    {
+        require(msg.sender == address(this));
+        
+        organizationName = _newOrganizationName;
+    }
+    
+    function setOrganizationShareSymbol(string _newOrganizationShareSymobl) external
+    {
+        require(msg.sender == address(this));
+        
+        organizationShareSymbol = _newOrganizationShareSymobl;
+    }
+    
+    function setOrganizationLogo(string _newOrganizationLogo) external
+    {
+        require(msg.sender == address(this));
+        
+        organizationLogo = _newOrganizationLogo;
+    }
+    
+    function setOrganizationDescription(string _newOrganizationDescription) external
+    {
+        require(msg.sender == address(this));
+        
+        organizationDescription = _newOrganizationDescription;
+    }
+    
     
     
     
@@ -1205,8 +1312,12 @@ contract Organization is ERC20
     
     // These functions can help user interfaces or other contracts
     // to fetch information more easily.
-        
-    function amountOfShareholders() external view returns (uint256)
+    
+    
+    
+    // Shareholder view functions
+    
+    function getAmountOfShareholders() external view returns (uint256)
     {
         return shareholders.length;
     }
@@ -1216,7 +1327,11 @@ contract Organization is ERC20
         return shareholders;
     }
     
-    function amountOfSubcontracts() external view returns (uint256)
+    
+    
+    // Subcontract view functions
+    
+    function getAmountOfSubcontracts() external view returns (uint256)
     {
         return subcontracts.length;
     }
@@ -1226,6 +1341,68 @@ contract Organization is ERC20
         return subcontracts;
     }
     
+    
+    
+    // Proposal view functions
+    
+    function getAmountOfProposals() external view returns (uint256)
+    {
+        return proposals.length;
+    }
+    
+    function getAmountOfTransactionsInProposal(uint256 _proposalIndex) external view returns (uint256)
+    {
+        return proposals[_proposalIndex].transactions.length;
+    }
+    
+    function getAmountOfVotersInProposal(uint256 _proposalIndex) external view returns (uint256)
+    {
+        return proposals[_proposalIndex].voters.length;
+    }
+    
+    function getVoterFromProposal(uint256 _proposalIndex, uint256 _voterIndex) external view returns (address _voterAddress, VoteStatus _voteStatus)
+    {
+        _voterAddress = proposals[_proposalIndex].voters[_voterIndex];
+        _voteStatus = proposals[_proposalIndex].votes[_voterAddress];
+        return;
+    }
+    
+    function getAllProposalVoters(uint256 _proposalIndex) external view returns (address[] memory _voterAddresses)
+    {
+        return proposals[_proposalIndex].voters;
+    }
+    
+    function getAllProposalVotersAndVotes(uint256 _proposalIndex) external view returns (address[] memory _voterAddresses, VoteStatus[] memory _votes)
+    {
+        Proposal storage proposal = proposals[_proposalIndex];
+        _voterAddresses = proposal.voters;
+        uint256 amount = _voterAddresses.length;
+        _votes = new VoteStatus[](amount);
+        for (uint256 i=0; i<amount; i++)
+        {
+            _votes[i] = proposal.votes[_voterAddresses[i]];
+        }
+        return;
+    }
+
+    function getVoteStatusFromProposal(uint256 _proposalIndex, address _voterAddress) external view returns (VoteStatus)
+    {
+        return proposals[_proposalIndex].votes[_voterAddress];
+    }
+
+    function getTransactionFromProposal(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (address _transactionDestination, uint256 _transactionValue, bytes memory _transactionData)
+    {
+        Transaction storage transaction = proposals[_proposalIndex].transactions[_transactionIndex];
+        _transactionDestination = transaction.destination;
+        _transactionValue = transaction.value;
+        _transactionData = transaction.data;
+        return;
+    }
+    
+    
+    
+    // Vote rule view functions
+    
     function lengthOf_dataPattern_to_voteRules() external view returns (uint256)
     {
         return dataPattern_to_voteRules.length;
@@ -1234,6 +1411,17 @@ contract Organization is ERC20
     function lengthOf_addressAndDataPattern_to_voteRules(address _address) external view returns (uint256)
     {
         return addressAndDataPattern_to_voteRules[_address].length;
+    }
+    
+    function getVoteRulesOfProposalTransaction(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
+    {
+        VoteRules memory voteRules = _getVoteRulesOfTransaction(proposals[_proposalIndex].transactions[_transactionIndex]);
+        return (
+            voteRules.votePermillageYesNeeded,
+            voteRules.votePermillageOfSharesNeeded_startAmount,
+            voteRules.votePermillageOfSharesNeeded_endAmount,
+            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
+        );
     }
     
     function getVoteRulesOfProposal(uint256 _proposalIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
@@ -1313,6 +1501,16 @@ contract Organization is ERC20
     
     uint256 public constant decimals = 0;
     
+    function name() external view returns (string)
+    {
+        return organizationName;
+    }
+    
+    function symbol() external view returns (string)
+    {
+        return organizationShareSymbol;
+    }
+    
     function totalSupply() external view returns (uint256)
     {
         return totalShares;
@@ -1354,6 +1552,9 @@ contract Organization is ERC20
             shareholders.push(_to);
         }
         
+        // Broadcast the ERC20 Transfer event
+        emit Transfer(_from, _to, _amount);
+        
         // If we are sending shares to a smart contract, call its tokenFallback function.
         if (_callTokenFallback)
         {
@@ -1365,7 +1566,6 @@ contract Organization is ERC20
                 receiver.tokenFallback(_from, _amount, _data);
             }
         }
-        emit Transfer(_from, _to, _amount);
     }
     
     function transfer(address _to, uint256 _amount) external returns (bool)
