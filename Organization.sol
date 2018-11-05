@@ -195,7 +195,7 @@ contract Organization is ERC20
     /////// CONSTRUCTOR FUNCTION
     
     // Test args:
-    // "Organization", "ORG", "", "This is a test organization.", 1000, [1000000, 1000000, 1000000, 0], [1000000, 1000000, 1000000, 0]
+    // "Organization", "ORG", "", "This is a test organization.", 1000, [501, 750, 100, 604800], [750, 1000, 250, 604800]
     
     constructor(string _name, string _symbol, string _logo, string _description, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _masterVoteRules) public payable
     {
