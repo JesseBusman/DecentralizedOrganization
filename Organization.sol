@@ -175,8 +175,8 @@ contract Organization is ERC20
     
     
     
-
-
+    
+    
     
     /////////////////////////////////////////////////
     /////// ORGANIZATION
@@ -235,6 +235,7 @@ contract Organization is ERC20
         addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = masterVoteRules;
         addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = masterVoteRules;
         addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).createShares.selector)] = masterVoteRules;
         
         totalShares = _initialShares;
         
@@ -623,6 +624,9 @@ contract Organization is ERC20
         
         _submitNewProposal_part_copyAllTransactionData(proposal, transactionDestinations, transactionValues, transactionDataLengths, transactionDatas);
         
+        if (extras == SubmitProposal_Extras.NO_EXTRAS)
+        {
+        }
         if (extras == SubmitProposal_Extras.VOTE_YES)
         {
             vote(proposals.length-1, VoteStatus.YES, false);
@@ -630,6 +634,10 @@ contract Organization is ERC20
         else if (extras == SubmitProposal_Extras.VOTE_YES_AND_FINALIZE)
         {
             vote(proposals.length-1, VoteStatus.YES, true);
+        }
+        else
+        {
+            revert();
         }
     }
     
@@ -1236,7 +1244,7 @@ contract Organization is ERC20
     }
     
     
-    // Default vote rules: default
+    // Default vote rules: master
     function createShares(uint256 _amount) external
     {
         require(msg.sender == address(this));
