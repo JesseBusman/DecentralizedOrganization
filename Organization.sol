@@ -197,7 +197,7 @@ contract Organization is ERC20
     // Test args:
     // "Organization", "ORG", "", "This is a test organization.", 1000, [1000000, 1000000, 1000000, 0], [1000000, 1000000, 1000000, 0]
     
-    constructor(string _name, string _symbol, string _logo, string _description, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _voteRulesToChangeVoteRules) public payable
+    constructor(string _name, string _symbol, string _logo, string _description, uint256 _initialShares, uint256[4] _defaultVoteRules, uint256[4] _masterVoteRules) public payable
     {
         require(_initialShares >= 1);
         
@@ -212,21 +212,29 @@ contract Organization is ERC20
         defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
         defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
         
-        VoteRules memory voteRulesToChangeVoteRules;
-        voteRulesToChangeVoteRules.exists = true;
-        voteRulesToChangeVoteRules.votePermillageYesNeeded = _voteRulesToChangeVoteRules[0];
-        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_startAmount = _voteRulesToChangeVoteRules[1];
-        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_endAmount = _voteRulesToChangeVoteRules[2];
-        voteRulesToChangeVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRulesToChangeVoteRules[3];
+        VoteRules memory masterVoteRules;
+        masterVoteRules.exists = true;
+        masterVoteRules.votePermillageYesNeeded = _masterVoteRules[0];
+        masterVoteRules.votePermillageOfSharesNeeded_startAmount = _masterVoteRules[1];
+        masterVoteRules.votePermillageOfSharesNeeded_endAmount = _masterVoteRules[2];
+        masterVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _masterVoteRules[3];
         
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addAddressDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = voteRulesToChangeVoteRules;
+        _validateVoteRules(defaultVoteRules);
+        _validateVoteRules(masterVoteRules);
+        
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addSubcontract.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).removeSubcontract.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdSubcontract.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setSubcontractAddressAndDataPattern.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setEtherTransferWithoutDataSubcontract.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addAddressDataPatternVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = masterVoteRules;
         
         totalShares = _initialShares;
         
@@ -412,7 +420,7 @@ contract Organization is ERC20
     // Voting rules for all other transactions
     VoteRules public defaultVoteRules;
     
-    function _validateVoteRules(VoteRules storage voteRules) private view
+    function _validateVoteRules(VoteRules memory voteRules) private pure
     {
         if (voteRules.exists)
         {
@@ -969,7 +977,9 @@ contract Organization is ERC20
     ////// Special functions
     
     // These functions can only be executed by the organization on itself via a proposal.
-
+    
+    
+    // Default vote rules: master
     function addSubcontract(address _subcontract) external
     {
         require(msg.sender == address(this));
@@ -992,6 +1002,8 @@ contract Organization is ERC20
         }
     }
     
+    
+    // Default vote rules: master
     function removeSubcontract(address _subcontract) external
     {
         require(msg.sender == address(this));
@@ -1013,6 +1025,8 @@ contract Organization is ERC20
         }
     }
     
+    
+    // Default vote rules: master
     function setFunctionIdSubcontract(bytes4 _functionId, address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
     {
         require(msg.sender == address(this));
@@ -1022,6 +1036,8 @@ contract Organization is ERC20
         functionId_to_subcontract[_functionId].sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
     }
     
+    
+    // Default vote rules: master
     function setSubcontractAddressAndDataPattern(uint256 _arrayIndex, address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask) external
     {
         require(msg.sender == address(this));
@@ -1049,6 +1065,8 @@ contract Organization is ERC20
         }
     }
     
+    
+    // Default vote rules: master
     function setEtherTransferWithoutDataSubcontract(address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
     {
         require(msg.sender == address(this));
@@ -1058,6 +1076,8 @@ contract Organization is ERC20
         etherTransferWithoutData_subcontract.sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
     }
     
+    
+    // Default vote rules: master
     function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
     {
         require(msg.sender == address(this));
@@ -1070,6 +1090,8 @@ contract Organization is ERC20
         _validateVoteRules(defaultVoteRules);
     }
     
+    
+    // Default vote rules: master
     function setAddressAndFunctionIdVoteRules(address _address, bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
@@ -1085,6 +1107,8 @@ contract Organization is ERC20
         _validateVoteRules(voteRules);
     }
     
+    
+    // Default vote rules: master
     function setAddressVoteRules(address _address, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
@@ -1099,6 +1123,8 @@ contract Organization is ERC20
         _validateVoteRules(voteRules);
     }
     
+    
+    // Default vote rules: master
     function setFunctionIdVoteRules(bytes4 _functionId, bool _exists, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
@@ -1113,6 +1139,8 @@ contract Organization is ERC20
         _validateVoteRules(voteRules);
     }
     
+    
+    // Default vote rules: master
     function addAddressDataPatternVoteRules(address _address, uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
@@ -1132,6 +1160,8 @@ contract Organization is ERC20
         _validateVoteRules(dataPatternAndVoteRules.voteRules);
     }
     
+    
+    // Default vote rules: master
     function deleteAddressDataPatternVoteRules(address _address, uint256 _index) external
     {
         require(msg.sender == address(this));
@@ -1139,6 +1169,8 @@ contract Organization is ERC20
         _deleteDataPatternAndVoteRulesFromArray(addressAndDataPattern_to_voteRules[_address], _index);
     }
     
+    
+    // Default vote rules: master
     function addDataPatternVoteRules(uint256 _dataMinimumLength, uint256 _dataMaximumLength, bytes _dataPattern, bytes _dataMask, uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
@@ -1158,6 +1190,8 @@ contract Organization is ERC20
         _validateVoteRules(dataPatternAndVoteRules.voteRules);
     }
     
+    
+    // Default vote rules: master
     function deleteDataPatternVoteRules(uint256 _index) external
     {
         require(msg.sender == address(this));
@@ -1201,6 +1235,8 @@ contract Organization is ERC20
         }
     }
     
+    
+    // Default vote rules: default
     function createShares(uint256 _amount) external
     {
         require(msg.sender == address(this));
@@ -1210,6 +1246,8 @@ contract Organization is ERC20
         emit Transfer(0x0, this, _amount);
     }
     
+    
+    // Default vote rules: default
     function destroyShares(uint256 _amount) external
     {
         require(msg.sender == address(this));
@@ -1220,6 +1258,8 @@ contract Organization is ERC20
         emit Transfer(this, 0x0, _amount);
     }
     
+    
+    // Default vote rules: default
     function splitShares(uint256 _multiplier) external
     {
         require(msg.sender == address(this));
@@ -1232,6 +1272,8 @@ contract Organization is ERC20
         totalShares *= _multiplier;
     }
     
+    
+    // Default vote rules: default
     function distributeEtherToAllShareholders(uint256 _totalAmount) external
     {
         require(msg.sender == address(this));
@@ -1246,7 +1288,9 @@ contract Organization is ERC20
             shareholder.transfer(_totalAmount * shares / _totalShares);
         }
     }
-
+    
+    
+    // Default vote rules: default
     function distributeTokensToShareholders(address _tokenContract, uint256 _tokenAmount) external
     {
         require(msg.sender == address(this));
@@ -1262,6 +1306,8 @@ contract Organization is ERC20
         }
     }
     
+    
+    // Default vote rules: default
     function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice) external
     {
         require(msg.sender == address(this));
@@ -1270,6 +1316,8 @@ contract Organization is ERC20
         maximumRefundedGasPrice = _maximumRefundedGasPrice;
     }
     
+    
+    // Default vote rules: default
     function setOrganizationName(string _newOrganizationName) external
     {
         require(msg.sender == address(this));
@@ -1277,6 +1325,8 @@ contract Organization is ERC20
         organizationName = _newOrganizationName;
     }
     
+    
+    // Default vote rules: default
     function setOrganizationShareSymbol(string _newOrganizationShareSymobl) external
     {
         require(msg.sender == address(this));
@@ -1284,6 +1334,8 @@ contract Organization is ERC20
         organizationShareSymbol = _newOrganizationShareSymobl;
     }
     
+    
+    // Default vote rules: default
     function setOrganizationLogo(string _newOrganizationLogo) external
     {
         require(msg.sender == address(this));
@@ -1291,6 +1343,8 @@ contract Organization is ERC20
         organizationLogo = _newOrganizationLogo;
     }
     
+    
+    // Default vote rules: default
     function setOrganizationDescription(string _newOrganizationDescription) external
     {
         require(msg.sender == address(this));
