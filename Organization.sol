@@ -123,7 +123,7 @@ contract Organization is ERC20
     // Based on these three state variables, transactions to this
     // organization can be automatically forwarded to a subcontract.
     
-    Subcontract public etherTransferWithoutData_subcontract;
+    Subcontract public noData_subcontract;
     mapping(bytes4 => Subcontract) public functionId_to_subcontract;
     SubcontractAddressAndDataPattern[] public subcontractAddressesAndDataPatterns;
     
@@ -206,11 +206,16 @@ contract Organization is ERC20
         organizationDescription = _description;
         organizationLogo = _logo;
         
+        VoteRules memory defaultVoteRules;
         defaultVoteRules.exists = true;
         defaultVoteRules.votePermillageYesNeeded = _defaultVoteRules[0];
         defaultVoteRules.votePermillageOfSharesNeeded_startAmount = _defaultVoteRules[1];
         defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
         defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
+        
+        defaultVoteRulesHash = _voteRules_to_voteRulesHash(defaultVoteRules);
+        
+        voteRulesHash_to_voteRules[defaultVoteRulesHash] = defaultVoteRules;
         
         VoteRules memory masterVoteRules;
         masterVoteRules.exists = true;
@@ -219,23 +224,25 @@ contract Organization is ERC20
         masterVoteRules.votePermillageOfSharesNeeded_endAmount = _masterVoteRules[2];
         masterVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _masterVoteRules[3];
         
+        bytes32 masterVoteRulesHash = _voteRules_to_voteRulesHash(masterVoteRules);
+        
         _validateVoteRules(defaultVoteRules);
         _validateVoteRules(masterVoteRules);
         
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addSubcontract.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).removeSubcontract.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdSubcontract.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setSubcontractAddressAndDataPattern.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setEtherTransferWithoutDataSubcontract.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addAddressDataPatternVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = masterVoteRules;
-        addressAndFunctionId_to_voteRules[_packAddressAndFunctionId(address(this), Organization(0x0).createShares.selector)] = masterVoteRules;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).addSubcontract.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).removeSubcontract.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdSubcontract.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setSubcontractAddressAndDataPattern.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setNoDataSubcontract.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setDefaultVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressAndFunctionIdVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setAddressVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).setFunctionIdVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).addAddressDataPatternVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).deleteAddressDataPatternVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).addDataPatternVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).deleteDataPatternVoteRules.selector)] = masterVoteRulesHash;
+        addressAndFunctionId_to_voteRulesHash[_packAddressAndFunctionId(address(this), Organization(0x0).createShares.selector)] = masterVoteRulesHash;
         
         totalShares = _initialShares;
         
@@ -249,6 +256,9 @@ contract Organization is ERC20
 
         subcontracts.push(this);
         subcontract_to_arrayIndex[this] = 0;
+        
+        // By default, the organization can receive ether.
+        noData_subcontract.contractAddress = address(0x1);
     }
     
     
@@ -261,87 +271,86 @@ contract Organization is ERC20
     
     function () payable external
     {
-        if (dataLength == 0 && msg.value == 0)
+        // If an unknown function is called on this organization contract,
+        // try to find a matching subcontract definition.
+        // If we can find one, execute it. Otherwise, revert the transaction.
+        
+        uint256 i;
+        uint256 dataLength = msg.data.length;
+        Subcontract memory subcontract;
+        
+        bytes memory data = msg.data;
+        
+        if (dataLength == 0)
         {
-            // If the orgnization receives an empty transaction (no data and no ether),
-            // we don't have to do anything.
+            // If a subcontract has been defined for messages without data, execute it.
+            subcontract = noData_subcontract;
         }
         else
         {
-            // If an unknown function is called on this organization contract,
-            // try to find a matching subcontract definition.
-            // If we can find one, execute it. Otherwise, revert the transaction.
-            
-            uint256 i;
-            uint256 dataLength = msg.data.length;
-            Subcontract memory subcontract;
-            
-            bytes memory data = msg.data;
-            
-            if (dataLength == 0)
+            bytes4 functionId;
+            if (dataLength >= 4)
             {
-                // If a subcontract has been defined for ether transfers without data,
-                // execute it.
-                subcontract = etherTransferWithoutData_subcontract;
-            }
-            else
-            {
-                bytes4 functionId;
                 functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
-                
-                if (functionId_to_subcontract[functionId].contractAddress != 0x0)
-                {
-                    subcontract = functionId_to_subcontract[functionId];
-                }
-                else
-                {
-                    uint256 len = subcontractAddressesAndDataPatterns.length;
-                    for (i=0; i<len; i++)
-                    {
-                        SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
-                        if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
-                        {
-                            subcontract = sadp.subcontract;
-                            break;
-                        }
-                    }
-                }
             }
             
-            // If we could not find a matching subcontract definition, revert the transaction.
-            if (subcontract.contractAddress == 0x0)
+            if (dataLength >= 4 && functionId_to_subcontract[functionId].contractAddress != 0x0)
             {
-                revert();
+                subcontract = functionId_to_subcontract[functionId];
             }
-            
-            // If we found a matching subcontract definition, forward the function call to the subcontract.
             else
             {
-                uint256 _etherForwardingSetting = subcontract.etherForwardingSetting;
-                if (_etherForwardingSetting >= 4)
+                uint256 len = subcontractAddressesAndDataPatterns.length;
+                for (i=0; i<len; i++)
                 {
-                    bytes32 _src = bytes32(uint256(msg.value));
-                    for (i=0; i<32; i++)
+                    SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
+                    if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
                     {
-                        data[_etherForwardingSetting] = _src[i];
-                        _etherForwardingSetting++;
+                        subcontract = sadp.subcontract;
+                        break;
                     }
                 }
-                
-                uint256 _sourceAddressForwardingSetting = subcontract.sourceAddressForwardingSetting;
-                if (_sourceAddressForwardingSetting >= 4)
-                {
-                    _src = bytes32(uint256(uint160(msg.sender)));
-                    for (i=0; i<32; i++)
-                    {
-                        data[_sourceAddressForwardingSetting] = _src[i];
-                        _sourceAddressForwardingSetting++;
-                    }
-                }
-                
-                
-                require(subcontract.contractAddress.call.value((_etherForwardingSetting == 1) ? msg.value : 0)(data) == true);
             }
+        }
+        
+        // If we could not find a matching subcontract definition, revert the transaction.
+        if (subcontract.contractAddress == 0x0)
+        {
+            revert();
+        }
+        
+        // If the subcontract address is 0x1, ignore the transaction without reverting.
+        else if (subcontract.contractAddress == 0x1)
+        {
+        }
+        
+        // If we found a matching subcontract definition, forward the function call to the subcontract.
+        else
+        {
+            uint256 _etherForwardingSetting = subcontract.etherForwardingSetting;
+            if (_etherForwardingSetting >= 4)
+            {
+                bytes32 _src = bytes32(uint256(msg.value));
+                for (i=0; i<32; i++)
+                {
+                    data[_etherForwardingSetting] = _src[i];
+                    _etherForwardingSetting++;
+                }
+            }
+            
+            uint256 _sourceAddressForwardingSetting = subcontract.sourceAddressForwardingSetting;
+            if (_sourceAddressForwardingSetting >= 4)
+            {
+                _src = bytes32(uint256(uint160(msg.sender)));
+                for (i=0; i<32; i++)
+                {
+                    data[_sourceAddressForwardingSetting] = _src[i];
+                    _sourceAddressForwardingSetting++;
+                }
+            }
+            
+            
+            require(subcontract.contractAddress.call.value((_etherForwardingSetting == 1) ? msg.value : 0)(data) == true);
         }
     }
     
@@ -396,30 +405,42 @@ contract Organization is ERC20
         uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds;
     }
     
-    struct DataPatternAndVoteRules
+    mapping(bytes32 => VoteRules) public voteRulesHash_to_voteRules;
+    
+    struct DataPatternAndVoteRulesHash
     {
         DataPattern dataPattern;
-        VoteRules voteRules;
+        bytes32 voteRulesHash;
     }
     
     // Voting rules for transactions with a specific destination address and specific data pattern
-    mapping(address => DataPatternAndVoteRules[]) public addressAndDataPattern_to_voteRules;
+    mapping(address => DataPatternAndVoteRulesHash[]) public addressAndDataPattern_to_voteRulesHash;
     
     // Voting rules for transactions to a specific address and specific function ID
     // (this is an optimized form of the special case of the one above)
-    mapping(bytes32 => VoteRules) public addressAndFunctionId_to_voteRules;
+    mapping(bytes32 => bytes32) public addressAndFunctionId_to_voteRulesHash;
     
     // Voting rules for transactions to a specific address
-    mapping(address => VoteRules) public address_to_voteRules;
+    mapping(address => bytes32) public address_to_voteRulesHash;
     
     // Voting rules for transactions with a specific data pattern
-    DataPatternAndVoteRules[] public dataPattern_to_voteRules;
+    DataPatternAndVoteRulesHash[] public dataPattern_to_voteRulesHash;
     
     // Voting rules for transactions with a specific function ID
-    mapping(bytes4 => VoteRules) public functionId_to_voteRules;
+    mapping(bytes4 => bytes32) public functionId_to_voteRulesHash;
     
     // Voting rules for all other transactions
-    VoteRules public defaultVoteRules;
+    bytes32 public defaultVoteRulesHash;
+    
+    function _voteRules_to_voteRulesHash(VoteRules memory voteRules) private pure returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(
+            voteRules.votePermillageYesNeeded,
+            voteRules.votePermillageOfSharesNeeded_startAmount,
+            voteRules.votePermillageOfSharesNeeded_endAmount,
+            voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
+        ));
+    }
     
     function _validateVoteRules(VoteRules memory voteRules) private pure
     {
@@ -439,7 +460,7 @@ contract Organization is ERC20
         }
     }
     
-    function _getVoteRulesOfTransaction(Transaction storage transaction) private view returns (VoteRules storage)
+    function _getVoteRulesOfTransaction(Transaction storage transaction) private view returns (VoteRules storage voteRules)
     {
         bytes4 functionId = 0x00000000;
         if (transaction.data.length >= 4)
@@ -452,46 +473,60 @@ contract Organization is ERC20
         }
         
         // destinationAddressAndDataPattern_to_voteRules
-        DataPatternAndVoteRules[] storage dataPatternAndVoteRuless = addressAndDataPattern_to_voteRules[transaction.destination];
-        for (uint256 i=0; i<dataPatternAndVoteRuless.length; i++)
+        DataPatternAndVoteRulesHash[] storage dataPatternAndVoteRulesHashes = addressAndDataPattern_to_voteRulesHash[transaction.destination];
+        for (uint256 i=0; i<dataPatternAndVoteRulesHashes.length; i++)
         {
-            DataPatternAndVoteRules storage dataPatternAndVoteRules = dataPatternAndVoteRuless[i];
-            if (dataPatternAndVoteRules.voteRules.exists && _matchDataPatternToData(dataPatternAndVoteRules.dataPattern, transaction.data))
+            DataPatternAndVoteRulesHash storage dataPatternAndVoteRulesHash = dataPatternAndVoteRulesHashes[i];
+            bytes32 voteRulesHash = dataPatternAndVoteRulesHash.voteRulesHash;
+            if (voteRulesHash != 0x0 && _matchDataPatternToData(dataPatternAndVoteRulesHash.dataPattern, transaction.data))
             {
-                return dataPatternAndVoteRules.voteRules;
+                return voteRulesHash_to_voteRules[voteRulesHash];
             }
         }
         
         // Use addressAndFunctionId_to_voteRules
         bytes32 addressAndFunctionId = _packAddressAndFunctionId(transaction.destination, functionId);
-        if (addressAndFunctionId_to_voteRules[addressAndFunctionId].exists) return addressAndFunctionId_to_voteRules[addressAndFunctionId];
+        voteRulesHash = addressAndFunctionId_to_voteRulesHash[addressAndFunctionId];
+        if (voteRulesHash != 0x0)
+        {
+            return voteRulesHash_to_voteRules[voteRulesHash];
+        }
         
         // address_to_voteRules
-        if (address_to_voteRules[transaction.destination].exists) return address_to_voteRules[transaction.destination];
+        voteRulesHash = address_to_voteRulesHash[transaction.destination];
+        if (voteRulesHash != 0x0)
+        {
+            return voteRulesHash_to_voteRules[voteRulesHash];
+        }
         
         // dataPattern_to_voteRules
-        dataPatternAndVoteRuless = dataPattern_to_voteRules;
-        for (uint256 j=0; j<dataPatternAndVoteRuless.length; j++)
+        dataPatternAndVoteRulesHashes = dataPattern_to_voteRulesHash;
+        for (uint256 j=0; j<dataPatternAndVoteRulesHashes.length; j++)
         {
-            dataPatternAndVoteRules = dataPatternAndVoteRuless[j];
-            if (dataPatternAndVoteRules.voteRules.exists && _matchDataPatternToData(dataPatternAndVoteRules.dataPattern, transaction.data))
+            dataPatternAndVoteRulesHash = dataPatternAndVoteRulesHashes[j];
+            voteRulesHash = dataPatternAndVoteRulesHash.voteRulesHash;
+            if (voteRulesHash != 0x0 && _matchDataPatternToData(dataPatternAndVoteRulesHash.dataPattern, transaction.data))
             {
-                return dataPatternAndVoteRules.voteRules;
+                return voteRulesHash_to_voteRules[voteRulesHash];
             }
         }
         
         // functionId_to_voteRules
-        if (functionId_to_voteRules[functionId].exists) return functionId_to_voteRules[functionId];
+        voteRulesHash = functionId_to_voteRulesHash[functionId];
+        if (voteRulesHash != 0x0)
+        {
+            return voteRulesHash_to_voteRules[voteRulesHash];
+        }
         
         // defaultVoteRules
-        return defaultVoteRules;
+        return voteRulesHash_to_voteRules[defaultVoteRulesHash];
     }
     
     function _getVoteRulesOfProposal(Proposal storage proposal) private view returns (VoteRules memory)
     {
         if (proposal.transactions.length == 0)
         {
-            return defaultVoteRules;
+            return voteRulesHash_to_voteRules[defaultVoteRulesHash];
         }
         else
         {
@@ -594,8 +629,8 @@ contract Organization is ERC20
         1000,
         ["0x1111111111111111111111111111111111111111"],
         [12321],
-        [0],
-        [],
+        [1],
+        "0x1",
         0
     */
     function submitProposal(
@@ -978,6 +1013,37 @@ contract Organization is ERC20
     
     
     
+    function _createVoteRulesAndComputeHash(uint256[4] memory _voteRules) private returns (bytes32 voteRulesHash)
+    {
+        VoteRules memory voteRules;
+        voteRules.exists = true;
+        voteRules.votePermillageYesNeeded = _voteRules[0];
+        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
+        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
+        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
+        
+        _validateVoteRules(voteRules);
+        
+        voteRulesHash = _voteRules_to_voteRulesHash(voteRules);
+        
+        VoteRules storage voteRulesStorage = voteRulesHash_to_voteRules[voteRulesHash];
+        
+        if (voteRulesStorage.exists == true)
+        {
+            require(
+                voteRulesStorage.votePermillageYesNeeded == voteRules.votePermillageYesNeeded &&
+                voteRulesStorage.votePermillageOfSharesNeeded_startAmount == voteRules.votePermillageOfSharesNeeded_startAmount &&
+                voteRulesStorage.votePermillageOfSharesNeeded_endAmount == voteRules.votePermillageOfSharesNeeded_endAmount &&
+                voteRulesStorage.votePermillageOfSharesNeeded_reductionPeriodSeconds == voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds
+            );
+        }
+        else
+        {
+            voteRulesHash_to_voteRules[voteRulesHash] = voteRules;
+        }
+    }
+    
+    
     
     
     
@@ -1075,27 +1141,22 @@ contract Organization is ERC20
     
     
     // Default vote rules: master
-    function setEtherTransferWithoutDataSubcontract(address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
+    function setNoDataSubcontract(address _subcontractAddress, uint256 _etherForwardingSetting, uint256 _sourceAddressForwardingSetting) external
     {
         require(msg.sender == address(this));
         
-        etherTransferWithoutData_subcontract.contractAddress = _subcontractAddress;
-        etherTransferWithoutData_subcontract.etherForwardingSetting = _etherForwardingSetting;
-        etherTransferWithoutData_subcontract.sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
+        noData_subcontract.contractAddress = _subcontractAddress;
+        noData_subcontract.etherForwardingSetting = _etherForwardingSetting;
+        noData_subcontract.sourceAddressForwardingSetting = _sourceAddressForwardingSetting;
     }
     
     
     // Default vote rules: master
-    function setDefaultVoteRules(uint256[4] _defaultVoteRules) external
+    function setDefaultVoteRules(uint256[4] _voteRules) external
     {
         require(msg.sender == address(this));
         
-        defaultVoteRules.votePermillageYesNeeded = _defaultVoteRules[0];
-        defaultVoteRules.votePermillageOfSharesNeeded_startAmount = _defaultVoteRules[1];
-        defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
-        defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _defaultVoteRules[3];
-        
-        _validateVoteRules(defaultVoteRules);
+        defaultVoteRulesHash = _createVoteRulesAndComputeHash(_voteRules);
     }
     
     
@@ -1105,14 +1166,15 @@ contract Organization is ERC20
         require(msg.sender == address(this));
         
         bytes32 addressAndFunctionId = _packAddressAndFunctionId(_address, _functionId);
-        VoteRules storage voteRules = addressAndFunctionId_to_voteRules[addressAndFunctionId];
-        voteRules.exists = _exists;
-        voteRules.votePermillageYesNeeded = _voteRules[0];
-        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
         
-        _validateVoteRules(voteRules);
+        if (_exists)
+        {
+            addressAndFunctionId_to_voteRulesHash[addressAndFunctionId] = _createVoteRulesAndComputeHash(_voteRules);
+        }
+        else
+        {
+            addressAndFunctionId_to_voteRulesHash[addressAndFunctionId] = 0x0;
+        }
     }
     
     
@@ -1121,14 +1183,14 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        VoteRules storage voteRules = address_to_voteRules[_address];
-        voteRules.exists = _exists;
-        voteRules.votePermillageYesNeeded = _voteRules[0];
-        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
-        
-        _validateVoteRules(voteRules);
+        if (_exists)
+        {
+            address_to_voteRulesHash[_address] = _createVoteRulesAndComputeHash(_voteRules);
+        }
+        else
+        {
+            address_to_voteRulesHash[_address] = 0x0;
+        }
     }
     
     
@@ -1137,14 +1199,14 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        VoteRules storage voteRules = functionId_to_voteRules[_functionId];
-        voteRules.exists = _exists;
-        voteRules.votePermillageYesNeeded = _voteRules[0];
-        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
-        
-        _validateVoteRules(voteRules);
+        if (_exists)
+        {
+            functionId_to_voteRulesHash[_functionId] = _createVoteRulesAndComputeHash(_voteRules);
+        }
+        else
+        {
+            functionId_to_voteRulesHash[_functionId] = 0x0;
+        }
     }
     
     
@@ -1153,19 +1215,13 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        addressAndDataPattern_to_voteRules[_address].length++;
-        DataPatternAndVoteRules storage dataPatternAndVoteRules = addressAndDataPattern_to_voteRules[_address][dataPattern_to_voteRules.length-1];
-        dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
-        dataPatternAndVoteRules.dataPattern.maximumLength = _dataMaximumLength;
-        dataPatternAndVoteRules.dataPattern.data = _dataPattern;
-        dataPatternAndVoteRules.dataPattern.mask = _dataMask;
-        dataPatternAndVoteRules.voteRules.exists = true;
-        dataPatternAndVoteRules.voteRules.votePermillageYesNeeded = _voteRules[0];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
-        
-        _validateVoteRules(dataPatternAndVoteRules.voteRules);
+        addressAndDataPattern_to_voteRulesHash[_address].length++;
+        DataPatternAndVoteRulesHash storage dataPatternAndVoteRulesHash = addressAndDataPattern_to_voteRulesHash[_address][addressAndDataPattern_to_voteRulesHash[_address].length-1];
+        dataPatternAndVoteRulesHash.dataPattern.minimumLength = _dataMinimumLength;
+        dataPatternAndVoteRulesHash.dataPattern.maximumLength = _dataMaximumLength;
+        dataPatternAndVoteRulesHash.dataPattern.data = _dataPattern;
+        dataPatternAndVoteRulesHash.dataPattern.mask = _dataMask;
+        dataPatternAndVoteRulesHash.voteRulesHash = _createVoteRulesAndComputeHash(_voteRules);
     }
     
     
@@ -1174,7 +1230,7 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        _deleteDataPatternAndVoteRulesFromArray(addressAndDataPattern_to_voteRules[_address], _index);
+        _deleteDataPatternAndVoteRulesHashFromArray(addressAndDataPattern_to_voteRulesHash[_address], _index);
     }
     
     
@@ -1183,19 +1239,13 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        dataPattern_to_voteRules.length++;
-        DataPatternAndVoteRules storage dataPatternAndVoteRules = dataPattern_to_voteRules[dataPattern_to_voteRules.length-1];
-        dataPatternAndVoteRules.dataPattern.minimumLength = _dataMinimumLength;
-        dataPatternAndVoteRules.dataPattern.maximumLength = _dataMaximumLength;
-        dataPatternAndVoteRules.dataPattern.data = _dataPattern;
-        dataPatternAndVoteRules.dataPattern.mask = _dataMask;
-        dataPatternAndVoteRules.voteRules.exists = true;
-        dataPatternAndVoteRules.voteRules.votePermillageYesNeeded = _voteRules[0];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        dataPatternAndVoteRules.voteRules.votePermillageOfSharesNeeded_reductionPeriodSeconds = _voteRules[3];
-        
-        _validateVoteRules(dataPatternAndVoteRules.voteRules);
+        dataPattern_to_voteRulesHash.length++;
+        DataPatternAndVoteRulesHash storage dataPatternAndVoteRulesHash = dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1];
+        dataPatternAndVoteRulesHash.dataPattern.minimumLength = _dataMinimumLength;
+        dataPatternAndVoteRulesHash.dataPattern.maximumLength = _dataMaximumLength;
+        dataPatternAndVoteRulesHash.dataPattern.data = _dataPattern;
+        dataPatternAndVoteRulesHash.dataPattern.mask = _dataMask;
+        dataPatternAndVoteRulesHash.voteRulesHash = _createVoteRulesAndComputeHash(_voteRules);
     }
     
     
@@ -1204,42 +1254,42 @@ contract Organization is ERC20
     {
         require(msg.sender == address(this));
         
-        _deleteDataPatternAndVoteRulesFromArray(dataPattern_to_voteRules, _index);
+        _deleteDataPatternAndVoteRulesHashFromArray(dataPattern_to_voteRulesHash, _index);
     }
     
-    function _deleteDataPatternAndVoteRulesFromArray(DataPatternAndVoteRules[] storage _array, uint256 _index) private
+    function _deleteDataPatternAndVoteRulesHashFromArray(DataPatternAndVoteRulesHash[] storage _array, uint256 _index) private
     {
         require(_index < _array.length);
-        require(_array[_index].voteRules.exists);
+        require(_array[_index].voteRulesHash != 0x0);
         
         // If it's the last one...
-        if (_index == dataPattern_to_voteRules.length-1)
+        if (_index == dataPattern_to_voteRulesHash.length-1)
         {
             // ... delete the last one
-            dataPattern_to_voteRules[dataPattern_to_voteRules.length-1].voteRules.exists = false;
+            dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1].voteRulesHash = 0x0;
             
             // ... shrink the array by 1
-            dataPattern_to_voteRules.length--;
+            dataPattern_to_voteRulesHash.length--;
         }
         
         // If it's not the last one AND there are at least 2...
-        else if (dataPattern_to_voteRules.length >= 2 && _index < dataPattern_to_voteRules.length-1)
+        else if (dataPattern_to_voteRulesHash.length >= 2 && _index < dataPattern_to_voteRulesHash.length-1)
         {
             // ... copy the last one into its slot
-            dataPattern_to_voteRules[_index] = dataPattern_to_voteRules[dataPattern_to_voteRules.length-1];
+            dataPattern_to_voteRulesHash[_index] = dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1];
             
             // ... delete the last one
-            dataPattern_to_voteRules[dataPattern_to_voteRules.length-1].voteRules.exists = false;
+            dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1].voteRulesHash = 0x0;
             
             // ... shrink the array by 1
-            dataPattern_to_voteRules.length--;
+            dataPattern_to_voteRulesHash.length--;
         }
         
         // Otherwise ...
         else
         {
             // ... just set its existance to false
-            dataPattern_to_voteRules[_index].voteRules.exists = false;
+            dataPattern_to_voteRulesHash[_index].voteRulesHash = 0x0;
         }
     }
     
@@ -1465,14 +1515,14 @@ contract Organization is ERC20
     
     // Vote rule view functions
     
-    function lengthOf_dataPattern_to_voteRules() external view returns (uint256)
+    function lengthOf_dataPattern_to_voteRulesHash() external view returns (uint256)
     {
-        return dataPattern_to_voteRules.length;
+        return dataPattern_to_voteRulesHash.length;
     }
     
-    function lengthOf_addressAndDataPattern_to_voteRules(address _address) external view returns (uint256)
+    function lengthOf_addressAndDataPattern_to_voteRulesHash(address _address) external view returns (uint256)
     {
-        return addressAndDataPattern_to_voteRules[_address].length;
+        return addressAndDataPattern_to_voteRulesHash[_address].length;
     }
     
     function getVoteRulesOfProposalTransaction(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriodSeconds)
