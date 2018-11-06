@@ -629,8 +629,8 @@ contract Organization is ERC20
         1000,
         ["0x1111111111111111111111111111111111111111"],
         [12321],
-        [1],
-        "0x1",
+        [0],
+        [],
         0
     */
     function submitProposal(
@@ -662,7 +662,7 @@ contract Organization is ERC20
         if (extras == SubmitProposal_Extras.NO_EXTRAS)
         {
         }
-        if (extras == SubmitProposal_Extras.VOTE_YES)
+        else if (extras == SubmitProposal_Extras.VOTE_YES)
         {
             vote(proposals.length-1, VoteStatus.YES, false);
         }
@@ -1737,5 +1737,32 @@ contract Organization is ERC20
         TokenApprovalReceiver(_spender).receiveApproval(msg.sender, _amount, address(this), _data);
         return true;
     }
+}
+
+contract Subcontract
+{
+    Organization public organization;
+    mapping(address => bool) public authorizedAddresses;
+    constructor(Organization _organization) public
+    {
+        organization = _organization;
+        authorizedAddresses[organization] = true;
+    }
+    
+    modifier onlyOrganization()
+    {
+        require(authorizedAddresses[msg.sender] == true);
+        _;
+    }
+    
+    function setAddressAuthorization(address _address, bool _authorization) external onlyOrganization
+    {
+        authorizedAddresses[_address] = _authorization;
+    }
+}
+
+contract Subcontract_Role is Subcontract
+{
+    // TODO
 }
 
