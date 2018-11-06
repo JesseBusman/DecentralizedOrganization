@@ -195,7 +195,7 @@ contract Organization is ERC20
     /////// CONSTRUCTOR FUNCTION
     
     // Test args:
-    // "Organization", "ORG", "", "This is a test organization.", 1000, [501, 750, 100, 604800], [750, 1000, 250, 604800]
+    // "Organization", "ORG", "", "This is a test organization.", 1000, [501, 750, 100, 86400, 259200], [750, 1000, 250, 259200, 604800]
     
     constructor(string _name, string _symbol, string _logo, string _description, uint256 _initialShares, uint256[5] _defaultVoteRules, uint256[5] _masterVoteRules) public payable
     {
@@ -1460,6 +1460,17 @@ contract Organization is ERC20
     function getAllShareholders() external view returns (address[] memory)
     {
         return shareholders;
+    }
+    
+    function getAllShareholdersAndShares() external view returns (address[] memory _shareholders, uint256[] memory _shareholderShares)
+    {
+        _shareholders = shareholders;
+        _shareholderShares = new uint256[](_shareholders.length);
+        for (uint256 i=0; i<_shareholders.length; i++)
+        {
+            _shareholderShares[i] = shareholder_to_shares[_shareholders[i]];
+        }
+        return;
     }
     
     
