@@ -208,11 +208,11 @@ contract Organization is ERC20
         
         VoteRules memory defaultVoteRules;
         defaultVoteRules.exists = true;
-        defaultVoteRules.votePermillageYesNeeded = _defaultVoteRules[0];
-        defaultVoteRules.votePermillageOfSharesNeeded_startAmount = _defaultVoteRules[1];
-        defaultVoteRules.votePermillageOfSharesNeeded_endAmount = _defaultVoteRules[2];
-        defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds = _defaultVoteRules[3];
-        defaultVoteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds = _defaultVoteRules[4];
+        defaultVoteRules.yesVotePermillageNeeded = _defaultVoteRules[0];
+        defaultVoteRules.quorumPermillage_atStartOfReductionPeriod = _defaultVoteRules[1];
+        defaultVoteRules.quorumPermillage_atEndOfReductionPeriod = _defaultVoteRules[2];
+        defaultVoteRules.quorumReductionPeriod_startAfterSeconds = _defaultVoteRules[3];
+        defaultVoteRules.quorumReductionPeriod_durationSeconds = _defaultVoteRules[4];
         
         defaultVoteRulesHash = _voteRules_to_voteRulesHash(defaultVoteRules);
         
@@ -220,11 +220,11 @@ contract Organization is ERC20
         
         VoteRules memory masterVoteRules;
         masterVoteRules.exists = true;
-        masterVoteRules.votePermillageYesNeeded = _masterVoteRules[0];
-        masterVoteRules.votePermillageOfSharesNeeded_startAmount = _masterVoteRules[1];
-        masterVoteRules.votePermillageOfSharesNeeded_endAmount = _masterVoteRules[2];
-        masterVoteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds = _masterVoteRules[3];
-        masterVoteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds = _masterVoteRules[4];
+        masterVoteRules.yesVotePermillageNeeded = _masterVoteRules[0];
+        masterVoteRules.quorumPermillage_atStartOfReductionPeriod = _masterVoteRules[1];
+        masterVoteRules.quorumPermillage_atEndOfReductionPeriod = _masterVoteRules[2];
+        masterVoteRules.quorumReductionPeriod_startAfterSeconds = _masterVoteRules[3];
+        masterVoteRules.quorumReductionPeriod_durationSeconds = _masterVoteRules[4];
 
         bytes32 masterVoteRulesHash = _voteRules_to_voteRulesHash(masterVoteRules);
         
@@ -401,11 +401,11 @@ contract Organization is ERC20
     struct VoteRules
     {
         bool exists;
-        uint256 votePermillageYesNeeded;
-        uint256 votePermillageOfSharesNeeded_startAmount;
-        uint256 votePermillageOfSharesNeeded_endAmount;
-        uint256 votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds;
-        uint256 votePermillageOfSharesNeeded_reductionPeriod_durationSeconds;
+        uint256 yesVotePermillageNeeded;
+        uint256 quorumPermillage_atStartOfReductionPeriod;
+        uint256 quorumPermillage_atEndOfReductionPeriod;
+        uint256 quorumReductionPeriod_startAfterSeconds;
+        uint256 quorumReductionPeriod_durationSeconds;
     }
     
     mapping(bytes32 => VoteRules) public voteRulesHash_to_voteRules;
@@ -438,27 +438,27 @@ contract Organization is ERC20
     function _voteRules_to_voteRulesHash(VoteRules memory voteRules) private pure returns (bytes32)
     {
         return keccak256(abi.encodePacked(
-            voteRules.votePermillageYesNeeded,
-            voteRules.votePermillageOfSharesNeeded_startAmount,
-            voteRules.votePermillageOfSharesNeeded_endAmount,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds
+            voteRules.yesVotePermillageNeeded,
+            voteRules.quorumPermillage_atStartOfReductionPeriod,
+            voteRules.quorumPermillage_atEndOfReductionPeriod,
+            voteRules.quorumReductionPeriod_startAfterSeconds,
+            voteRules.quorumReductionPeriod_durationSeconds
         ));
     }
     
     function _validateVoteRules(VoteRules memory voteRules) private pure
     {
         require(voteRules.exists == true);
-        require(voteRules.votePermillageYesNeeded <= 1000);
-        require(voteRules.votePermillageOfSharesNeeded_startAmount <= 1001);
-        require(voteRules.votePermillageOfSharesNeeded_endAmount <= 1001);
-        if (voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds == 0)
+        require(voteRules.yesVotePermillageNeeded <= 1000);
+        require(voteRules.quorumPermillage_atStartOfReductionPeriod <= 1001);
+        require(voteRules.quorumPermillage_atEndOfReductionPeriod <= 1001);
+        if (voteRules.quorumReductionPeriod_durationSeconds == 0)
         {
-            require(voteRules.votePermillageOfSharesNeeded_startAmount == voteRules.votePermillageOfSharesNeeded_endAmount);
+            require(voteRules.quorumPermillage_atStartOfReductionPeriod == voteRules.quorumPermillage_atEndOfReductionPeriod);
         }
         else
         {
-            require(voteRules.votePermillageOfSharesNeeded_startAmount > voteRules.votePermillageOfSharesNeeded_endAmount);
+            require(voteRules.quorumPermillage_atStartOfReductionPeriod > voteRules.quorumPermillage_atEndOfReductionPeriod);
         }
     }
     
@@ -534,34 +534,34 @@ contract Organization is ERC20
         {
             VoteRules memory voteRules;
             voteRules.exists = true;
-            voteRules.votePermillageYesNeeded = 0;
-            voteRules.votePermillageOfSharesNeeded_startAmount = 0;
-            voteRules.votePermillageOfSharesNeeded_endAmount = 0;
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds = 0;
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds = 0;
+            voteRules.yesVotePermillageNeeded = 0;
+            voteRules.quorumPermillage_atStartOfReductionPeriod = 0;
+            voteRules.quorumPermillage_atEndOfReductionPeriod = 0;
+            voteRules.quorumReductionPeriod_startAfterSeconds = 0;
+            voteRules.quorumReductionPeriod_durationSeconds = 0;
             
             for (uint256 i=0; i<proposal.transactions.length; i++)
             {
                 VoteRules storage current = _getVoteRulesOfTransaction(proposal.transactions[i]);
-                if (current.votePermillageYesNeeded > voteRules.votePermillageYesNeeded)
+                if (current.yesVotePermillageNeeded > voteRules.yesVotePermillageNeeded)
                 {
-                    voteRules.votePermillageYesNeeded = current.votePermillageYesNeeded;
+                    voteRules.yesVotePermillageNeeded = current.yesVotePermillageNeeded;
                 }
-                if (current.votePermillageOfSharesNeeded_startAmount > voteRules.votePermillageOfSharesNeeded_startAmount)
+                if (current.quorumPermillage_atStartOfReductionPeriod > voteRules.quorumPermillage_atStartOfReductionPeriod)
                 {
-                    voteRules.votePermillageOfSharesNeeded_startAmount = current.votePermillageOfSharesNeeded_startAmount;
+                    voteRules.quorumPermillage_atStartOfReductionPeriod = current.quorumPermillage_atStartOfReductionPeriod;
                 }
-                if (current.votePermillageOfSharesNeeded_endAmount > voteRules.votePermillageOfSharesNeeded_endAmount)
+                if (current.quorumPermillage_atEndOfReductionPeriod > voteRules.quorumPermillage_atEndOfReductionPeriod)
                 {
-                    voteRules.votePermillageOfSharesNeeded_endAmount = current.votePermillageOfSharesNeeded_endAmount;
+                    voteRules.quorumPermillage_atEndOfReductionPeriod = current.quorumPermillage_atEndOfReductionPeriod;
                 }
-                if (current.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds > voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds)
+                if (current.quorumReductionPeriod_startAfterSeconds > voteRules.quorumReductionPeriod_startAfterSeconds)
                 {
-                    voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds = current.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds;
+                    voteRules.quorumReductionPeriod_startAfterSeconds = current.quorumReductionPeriod_startAfterSeconds;
                 }
-                if (current.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds > voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds)
+                if (current.quorumReductionPeriod_durationSeconds > voteRules.quorumReductionPeriod_durationSeconds)
                 {
-                    voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds = current.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds;
+                    voteRules.quorumReductionPeriod_durationSeconds = current.quorumReductionPeriod_durationSeconds;
                 }
             }
             return voteRules;
@@ -820,33 +820,33 @@ contract Organization is ERC20
         uint256 secondsSinceSubmission = block.timestamp - _timeSubmitted;
         
         // If we are before the start of the reducation period...
-        if (secondsSinceSubmission <= voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds)
+        if (secondsSinceSubmission <= voteRules.quorumReductionPeriod_startAfterSeconds)
         {
-            return voteRules.votePermillageOfSharesNeeded_startAmount;
+            return voteRules.quorumPermillage_atStartOfReductionPeriod;
         }
         
         // If we have passed the end of the reduction period...
-        else if (secondsSinceSubmission >= voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds + voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds)
+        else if (secondsSinceSubmission >= voteRules.quorumReductionPeriod_startAfterSeconds + voteRules.quorumReductionPeriod_durationSeconds)
         {
-            return voteRules.votePermillageOfSharesNeeded_endAmount;
+            return voteRules.quorumPermillage_atEndOfReductionPeriod;
         }
         
         // If we are in the reduction period...
         else
         {
             return
-                voteRules.votePermillageOfSharesNeeded_startAmount
+                voteRules.quorumPermillage_atStartOfReductionPeriod
                 -
-                (voteRules.votePermillageOfSharesNeeded_startAmount - voteRules.votePermillageOfSharesNeeded_endAmount) * (secondsSinceSubmission - voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds) / voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds;
+                (voteRules.quorumPermillage_atStartOfReductionPeriod - voteRules.quorumPermillage_atEndOfReductionPeriod) * (secondsSinceSubmission - voteRules.quorumReductionPeriod_startAfterSeconds) / voteRules.quorumReductionPeriod_durationSeconds;
         }
     }
     
-    function computeProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
+    function computeProposalVoteResultAndVoteCounts(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult _result, uint256 yesVotes, uint256 noVotes, uint256 totalVotesCast, uint256 totalVoterSharesCounted)
     {
-        uint256 totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
-        uint256 totalVotesCast = 0; // yes + no + active abstain
-        uint256 yesVotes = 0; // yes
-        uint256 noVotes = 0; // no
+        totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
+        totalVotesCast = 0; // yes + no + active abstain
+        yesVotes = 0; // yes
+        noVotes = 0; // no
         
         bool externallySuppliedVoterList;
         if (_voters.length == 0)
@@ -931,21 +931,21 @@ contract Organization is ERC20
         // we should neither reject nor accept the proposal.
         if ((totalVotesCast * 1000 / totalShares) < permillageOfSharesNeeded)
         {
-            return VoteResult.UNDECIDED;
+            _result = VoteResult.UNDECIDED;
         }
         
         // If there are enough yes votes to accept...
-        else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.votePermillageYesNeeded)
+        else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.yesVotePermillageNeeded)
         {
             // If the accept hint does not match the result of the vote count,
             // we should neither reject nor acccept the proposal.
             if (externallySuppliedVoterList && _acceptHint == false)
             {
-                return VoteResult.UNDECIDED;
+                _result = VoteResult.UNDECIDED;
             }
             else
             {
-                return VoteResult.READY_TO_ACCEPT;
+                _result = VoteResult.READY_TO_ACCEPT;
             }
         }
         
@@ -956,13 +956,27 @@ contract Organization is ERC20
             // we should neither reject nor acccept the proposal.
             if (externallySuppliedVoterList && _acceptHint == true)
             {
-                return VoteResult.UNDECIDED;
+                _result = VoteResult.UNDECIDED;
             }
             else
             {
-                return VoteResult.READY_TO_REJECT;
+                _result = VoteResult.READY_TO_REJECT;
             }
         }
+        
+        return;
+    }
+    
+    function computeProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
+    {
+        VoteResult ret;
+        uint256 a;
+        uint256 b;
+        uint256 c;
+        uint256 d;
+        (ret, a, b, c, d) = computeProposalVoteResultAndVoteCounts(_proposalIndex, _voters, _acceptHint);
+        
+        return ret;
     }
     
     function deleteVotersWithoutShares(uint256[] _proposalIndices, uint256[] _voterArrayIndices) external
@@ -1038,11 +1052,11 @@ contract Organization is ERC20
     {
         VoteRules memory voteRules;
         voteRules.exists = true;
-        voteRules.votePermillageYesNeeded = _voteRules[0];
-        voteRules.votePermillageOfSharesNeeded_startAmount = _voteRules[1];
-        voteRules.votePermillageOfSharesNeeded_endAmount = _voteRules[2];
-        voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds = _voteRules[3];
-        voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds = _voteRules[4];
+        voteRules.yesVotePermillageNeeded = _voteRules[0];
+        voteRules.quorumPermillage_atStartOfReductionPeriod = _voteRules[1];
+        voteRules.quorumPermillage_atEndOfReductionPeriod = _voteRules[2];
+        voteRules.quorumReductionPeriod_startAfterSeconds = _voteRules[3];
+        voteRules.quorumReductionPeriod_durationSeconds = _voteRules[4];
         
         _validateVoteRules(voteRules);
         
@@ -1053,11 +1067,11 @@ contract Organization is ERC20
         if (voteRulesStorage.exists == true)
         {
             require(
-                voteRulesStorage.votePermillageYesNeeded == voteRules.votePermillageYesNeeded &&
-                voteRulesStorage.votePermillageOfSharesNeeded_startAmount == voteRules.votePermillageOfSharesNeeded_startAmount &&
-                voteRulesStorage.votePermillageOfSharesNeeded_endAmount == voteRules.votePermillageOfSharesNeeded_endAmount &&
-                voteRulesStorage.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds == voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds &&
-                voteRulesStorage.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds == voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds
+                voteRulesStorage.yesVotePermillageNeeded == voteRules.yesVotePermillageNeeded &&
+                voteRulesStorage.quorumPermillage_atStartOfReductionPeriod == voteRules.quorumPermillage_atStartOfReductionPeriod &&
+                voteRulesStorage.quorumPermillage_atEndOfReductionPeriod == voteRules.quorumPermillage_atEndOfReductionPeriod &&
+                voteRulesStorage.quorumReductionPeriod_startAfterSeconds == voteRules.quorumReductionPeriod_startAfterSeconds &&
+                voteRulesStorage.quorumReductionPeriod_durationSeconds == voteRules.quorumReductionPeriod_durationSeconds
             );
         }
         else
@@ -1559,28 +1573,28 @@ contract Organization is ERC20
         return addressAndDataPattern_to_voteRulesHash[_address].length;
     }
     
-    function getVoteRulesOfProposalTransaction(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds, uint256 votePermillageOfSharesNeeded_reductionPeriod_durationSeconds)
+    function getVoteRulesOfProposalTransaction(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (uint256 yesVotePermillageNeeded, uint256 quorumPermillage_atStartOfReductionPeriod, uint256 quorumPermillage_atEndOfReductionPeriod, uint256 quorumReductionPeriod_startAfterSeconds, uint256 quorumReductionPeriod_durationSeconds)
     {
         VoteRules memory voteRules = _getVoteRulesOfTransaction(proposals[_proposalIndex].transactions[_transactionIndex]);
         return (
-            voteRules.votePermillageYesNeeded,
-            voteRules.votePermillageOfSharesNeeded_startAmount,
-            voteRules.votePermillageOfSharesNeeded_endAmount,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds
+            voteRules.yesVotePermillageNeeded,
+            voteRules.quorumPermillage_atStartOfReductionPeriod,
+            voteRules.quorumPermillage_atEndOfReductionPeriod,
+            voteRules.quorumReductionPeriod_startAfterSeconds,
+            voteRules.quorumReductionPeriod_durationSeconds
         );
     }
     
-    function getVoteRulesOfProposal(uint256 _proposalIndex) external view returns (uint256 votePermillageYesNeeded, uint256 votePermillageOfSharesNeeded_startAmount, uint256 votePermillageOfSharesNeeded_endAmount, uint256 votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds, uint256 votePermillageOfSharesNeeded_reductionPeriod_durationSeconds)
+    function getVoteRulesOfProposal(uint256 _proposalIndex) external view returns (uint256 yesVotePermillageNeeded, uint256 quorumPermillage_atStartOfReductionPeriod, uint256 quorumPermillage_atEndOfReductionPeriod, uint256 quorumReductionPeriod_startAfterSeconds, uint256 quorumReductionPeriod_durationSeconds)
     {
         require(_proposalIndex < proposals.length);
         VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
         return (
-            voteRules.votePermillageYesNeeded,
-            voteRules.votePermillageOfSharesNeeded_startAmount,
-            voteRules.votePermillageOfSharesNeeded_endAmount,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_startAfterSeconds,
-            voteRules.votePermillageOfSharesNeeded_reductionPeriod_durationSeconds
+            voteRules.yesVotePermillageNeeded,
+            voteRules.quorumPermillage_atStartOfReductionPeriod,
+            voteRules.quorumPermillage_atEndOfReductionPeriod,
+            voteRules.quorumReductionPeriod_startAfterSeconds,
+            voteRules.quorumReductionPeriod_durationSeconds
         );
     }
     
