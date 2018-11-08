@@ -873,7 +873,7 @@ contract Organization is ERC20
         // We can reject the proposal immediately.
         else if (voteRules.yesVotePermillageNeeded >= 1001 || voteRules.quorumPermillage_atEndOfReductionPeriod >= 1001)
         {
-            _result = VoteResult.READY_TO_ACCEPT;
+            _result = VoteResult.READY_TO_REJECT;
         }
         
         else
