@@ -462,7 +462,7 @@ contract Organization is ERC20
         }
     }
     
-    function _getVoteRulesOfTransaction(Transaction storage transaction) private view returns (VoteRules storage voteRules)
+    function _getVoteRulesOfTransaction(Transaction memory transaction) private view returns (VoteRules storage voteRules)
     {
         bytes4 functionId = 0x00000000;
         if (transaction.data.length >= 4)
@@ -847,7 +847,7 @@ contract Organization is ERC20
         totalVotesCast = 0; // yes + no + active abstain
         yesVotes = 0; // yes
         noVotes = 0; // no
-        
+
         bool externallySuppliedVoterList;
         if (_voters.length == 0)
         {
@@ -858,112 +858,128 @@ contract Organization is ERC20
         {
             externallySuppliedVoterList = true;
         }
-        
-        // Loop over the voters and tally up their votes.
-        for (uint256 i=0; i<_voters.length; i++)
-        {
-            uint256 votes = shareholder_to_shares[_voters[i]];
-            VoteStatus voteStatus = proposals[_proposalIndex].votes[_voters[i]];
-            totalVoterSharesCounted += votes;
-            if (voteStatus == VoteStatus.PERMANENT_NO)
-            {
-                totalVotesCast += votes;
-                noVotes += votes;
-            }
-            else if (voteStatus == VoteStatus.NO)
-            {
-                totalVotesCast += votes;
-                noVotes += votes;
-            }
-            else if (voteStatus == VoteStatus.ACTIVE_ABSTAIN)
-            {
-                totalVotesCast += votes;
-            }
-            else if (voteStatus == VoteStatus.YES)
-            {
-                totalVotesCast += votes;
-                yesVotes += votes;
-            }
-            else if (voteStatus == VoteStatus.PERMANENT_YES)
-            {
-                totalVotesCast += votes;
-                yesVotes += votes;
-            }
-            else if (voteStatus == VoteStatus.PASSIVE_ABSTAIN)
-            {
-            }
-            else
-            {
-                revert();
-            }
-        }
-        
-        // If the organization itself has not voted with its own shares yet,
-        // it actively abstains by default.
-        if (proposals[_proposalIndex].votes[this] == VoteStatus.NOT_VOTED_YET)
-        {
-            totalVotesCast += shareholder_to_shares[this];
-        }
-        
+
         // Select and load the voting rules we should obey when finalizing this proposal.
         VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
         
-        // Calculate the amount of shares that must have cast a vote
-        uint256 permillageOfSharesNeeded = computeCurrentPermillageOfSharesNeeded(proposals[_proposalIndex].timeSubmitted, voteRules);
-        
-        // If the voter list was externally supplied,
-        // assume that all unknown votes are the opposite of the externally supplied hint.
-        if (externallySuppliedVoterList)
+        // If this proposal does not require any votes, don't bother counting the votes.
+        // We can accept the proposal immediately.
+        if (voteRules.yesVotePermillageNeeded == 0 && voteRules.quorumPermillage_atStartOfReductionPeriod == 0)
         {
-            if (_acceptHint == true)
-            {
-                // Assume that all unknown votes are NO
-                noVotes += totalShares - totalVoterSharesCounted;
-            }
-            else
-            {
-                // Assume that all unknown votes are YES
-                yesVotes += totalShares - totalVoterSharesCounted;
-            }
+            _result = VoteResult.READY_TO_ACCEPT;
         }
         
-        // If not enough votes have been cast,
-        // we should neither reject nor accept the proposal.
-        if ((totalVotesCast * 1000 / totalShares) < permillageOfSharesNeeded)
+        // If this proposal is forbidden entirely by the voting rules, don't bother counting the votes.
+        // We can reject the proposal immediately.
+        else if (voteRules.yesVotePermillageNeeded >= 1001 || voteRules.quorumPermillage_atEndOfReductionPeriod >= 1001)
         {
-            _result = VoteResult.UNDECIDED;
+            _result = VoteResult.READY_TO_ACCEPT;
         }
         
-        // If there are enough yes votes to accept...
-        else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.yesVotePermillageNeeded)
-        {
-            // If the accept hint does not match the result of the vote count,
-            // we should neither reject nor acccept the proposal.
-            if (externallySuppliedVoterList && _acceptHint == false)
-            {
-                _result = VoteResult.UNDECIDED;
-            }
-            else
-            {
-                _result = VoteResult.READY_TO_ACCEPT;
-            }
-        }
-        
-        // if there are enough no votes to reject...
         else
         {
-            // If the accept hint does not match the result of the vote count,
-            // we should neither reject nor acccept the proposal.
-            if (externallySuppliedVoterList && _acceptHint == true)
+            // Loop over the voters and count their votes. 1 share counts as 1 vote.
+            for (uint256 i=0; i<_voters.length; i++)
+            {
+                uint256 votes = shareholder_to_shares[_voters[i]];
+                VoteStatus voteStatus = proposals[_proposalIndex].votes[_voters[i]];
+                totalVoterSharesCounted += votes;
+                if (voteStatus == VoteStatus.PERMANENT_NO)
+                {
+                    totalVotesCast += votes;
+                    noVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.NO)
+                {
+                    totalVotesCast += votes;
+                    noVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.ACTIVE_ABSTAIN)
+                {
+                    totalVotesCast += votes;
+                }
+                else if (voteStatus == VoteStatus.YES)
+                {
+                    totalVotesCast += votes;
+                    yesVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.PERMANENT_YES)
+                {
+                    totalVotesCast += votes;
+                    yesVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.PASSIVE_ABSTAIN)
+                {
+                }
+                else
+                {
+                    assert(false);
+                }
+            }
+            
+            // If the organization itself has not voted with its own shares yet,
+            // it actively abstains by default.
+            if (proposals[_proposalIndex].votes[this] == VoteStatus.NOT_VOTED_YET)
+            {
+                totalVotesCast += shareholder_to_shares[this];
+            }
+            
+            // Calculate the amount of shares that must have cast a vote
+            uint256 permillageOfSharesNeeded = computeCurrentPermillageOfSharesNeeded(proposals[_proposalIndex].timeSubmitted, voteRules);
+            
+            // If the voter list was externally supplied,
+            // assume that all unknown votes are the opposite of the externally supplied hint.
+            if (externallySuppliedVoterList)
+            {
+                if (_acceptHint == true)
+                {
+                    // Assume that all unknown votes are NO
+                    noVotes += totalShares - totalVoterSharesCounted;
+                }
+                else
+                {
+                    // Assume that all unknown votes are YES
+                    yesVotes += totalShares - totalVoterSharesCounted;
+                }
+            }
+            
+            // If not enough votes have been cast,
+            // we should neither reject nor accept the proposal.
+            if ((totalVotesCast * 1000 / totalShares) < permillageOfSharesNeeded)
             {
                 _result = VoteResult.UNDECIDED;
             }
+            
+            // If there are enough yes votes to accept...
+            else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.yesVotePermillageNeeded)
+            {
+                // If the accept hint does not match the result of the vote count,
+                // we should neither reject nor acccept the proposal.
+                if (externallySuppliedVoterList && _acceptHint == false)
+                {
+                    _result = VoteResult.UNDECIDED;
+                }
+                else
+                {
+                    _result = VoteResult.READY_TO_ACCEPT;
+                }
+            }
+            
+            // if there are enough no votes to reject...
             else
             {
-                _result = VoteResult.READY_TO_REJECT;
+                // If the accept hint does not match the result of the vote count,
+                // we should neither reject nor acccept the proposal.
+                if (externallySuppliedVoterList && _acceptHint == true)
+                {
+                    _result = VoteResult.UNDECIDED;
+                }
+                else
+                {
+                    _result = VoteResult.READY_TO_REJECT;
+                }
             }
         }
-        
         return;
     }
     
@@ -1573,6 +1589,22 @@ contract Organization is ERC20
         return addressAndDataPattern_to_voteRulesHash[_address].length;
     }
     
+    function getVoteRulesOfTransaction(address _destination, uint256 _value, bytes _data) external view returns  (uint256 yesVotePermillageNeeded, uint256 quorumPermillage_atStartOfReductionPeriod, uint256 quorumPermillage_atEndOfReductionPeriod, uint256 quorumReductionPeriod_startAfterSeconds, uint256 quorumReductionPeriod_durationSeconds)
+    {
+        Transaction memory transaction;
+        transaction.destination = _destination;
+        transaction.value = _value;
+        transaction.data = _data;
+        VoteRules memory voteRules = _getVoteRulesOfTransaction(transaction);
+        return (
+            voteRules.yesVotePermillageNeeded,
+            voteRules.quorumPermillage_atStartOfReductionPeriod,
+            voteRules.quorumPermillage_atEndOfReductionPeriod,
+            voteRules.quorumReductionPeriod_startAfterSeconds,
+            voteRules.quorumReductionPeriod_durationSeconds
+        );
+    }
+    
     function getVoteRulesOfProposalTransaction(uint256 _proposalIndex, uint256 _transactionIndex) external view returns (uint256 yesVotePermillageNeeded, uint256 quorumPermillage_atStartOfReductionPeriod, uint256 quorumPermillage_atEndOfReductionPeriod, uint256 quorumReductionPeriod_startAfterSeconds, uint256 quorumReductionPeriod_durationSeconds)
     {
         VoteRules memory voteRules = _getVoteRulesOfTransaction(proposals[_proposalIndex].transactions[_transactionIndex]);
@@ -1801,7 +1833,7 @@ contract Subcontract
     
     modifier onlyOrganization()
     {
-        require(authorizedAddresses[msg.sender] == true);
+        require(msg.sender == address(organization));
         _;
     }
     
