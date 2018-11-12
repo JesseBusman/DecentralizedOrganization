@@ -169,6 +169,7 @@ contract Organization is ERC20
 
     bool public organizationRefundsFees = true;
     uint256 public maximumRefundedGasPrice = 20*1000*1000*1000;
+    uint256 public maximumRefundedFeeAmount = 0.001 ether;
     
     
     
@@ -761,6 +762,7 @@ contract Organization is ERC20
                         uint256 gasPrice = tx.gasprice <= maximumRefundedGasPrice ? tx.gasprice : maximumRefundedGasPrice;
                         uint256 txFeeRefund = gasUsed * gasPrice;
                         if (txFeeRefund > address(this).balance) txFeeRefund = address(this).balance;
+                        if (txFeeRefund > maximumRefundedFeeAmount) txFeeRefund = maximumRefundedFeeAmount;
                         msg.sender.transfer(txFeeRefund);
                     }
                     
@@ -995,7 +997,7 @@ contract Organization is ERC20
         return ret;
     }
     
-    function deleteVotersWithoutShares(uint256[] _proposalIndices, uint256[] _voterArrayIndices) external
+    function deleteVotersWithoutShares(uint256[] _proposalIndices, uint256[] _voterArrayIndices, bool _getGasRefund) external
     {
         require(_proposalIndices.length == _voterArrayIndices.length);
         for (uint256 i=0; i<_proposalIndices.length; i++)
@@ -1005,9 +1007,10 @@ contract Organization is ERC20
             if (shareholder_to_shares[proposal.voters[arrayIndexToDelete]] == 0)
             {
                 uint256 proposalVotersLengthMinusOne = proposal.voters.length-1;
-                if (arrayIndexToDelete < proposalVotersLengthMinusOne)
+                proposal.voters[arrayIndexToDelete] = proposal.voters[proposalVotersLengthMinusOne];
+                if (_getGasRefund)
                 {
-                    proposal.voters[arrayIndexToDelete] = proposal.voters[proposalVotersLengthMinusOne];
+                    proposal.voters[proposalVotersLengthMinusOne] = address(0x0);
                 }
                 proposal.voters.length = proposalVotersLengthMinusOne;
             }
@@ -1419,12 +1422,13 @@ contract Organization is ERC20
     
     
     // Default vote rules: default
-    function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice) external
+    function setTransactionFeeRefundSettings(bool _organizationRefundsFees, uint256 _maximumRefundedGasPrice, uint256 _maximumRefundedFeeAmount) external
     {
         require(msg.sender == address(this));
         
         organizationRefundsFees = _organizationRefundsFees;
         maximumRefundedGasPrice = _maximumRefundedGasPrice;
+        maximumRefundedFeeAmount = _maximumRefundedFeeAmount;
     }
     
     
@@ -1847,4 +1851,3 @@ contract Subcontract_Role is Subcontract
 {
     // TODO
 }
-
