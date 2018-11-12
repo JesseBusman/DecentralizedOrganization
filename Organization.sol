@@ -735,7 +735,10 @@ contract Organization is ERC20
         }
         else
         {
-            VoteResult proposalVoteResult = computeProposalVoteResult(_proposalIndex, _voters, _acceptHint);
+            VoteResult proposalVoteResult = 
+                _voters.length == 0
+                    ? computeProposalVoteResult_internallySuppliedVoterList(_proposalIndex)
+                    : _computeProposalVoteResult_externallySuppliedVoterList(_proposalIndex, _voters, _acceptHint);
             
             if (proposalVoteResult == VoteResult.UNDECIDED)
             {
@@ -843,23 +846,17 @@ contract Organization is ERC20
         }
     }
     
-    function computeProposalVoteResultAndVoteCounts(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult _result, uint256 yesVotes, uint256 noVotes, uint256 totalVotesCast, uint256 totalVoterSharesCounted)
+    function computeProposalVoteResultAndVoteCounts_internallySuppliedVoterList(uint256 _proposalIndex) public view returns (VoteResult _result, uint256 yesVotes, uint256 noVotes, uint256 totalVotesCast, uint256 totalVoterSharesCounted)
     {
+        uint256 _totalSharesThatCanVote = totalShares - shareholder_to_shares[address(this)];
+        
         totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
         totalVotesCast = 0; // yes + no + active abstain
         yesVotes = 0; // yes
         noVotes = 0; // no
 
-        bool externallySuppliedVoterList;
-        if (_voters.length == 0)
-        {
-            externallySuppliedVoterList = false;
-            _voters = proposals[_proposalIndex].voters;
-        }
-        else
-        {
-            externallySuppliedVoterList = true;
-        }
+        // Load the voter list
+        address[] memory _voters = proposals[_proposalIndex].voters;
 
         // Select and load the voting rules we should obey when finalizing this proposal.
         VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
@@ -883,8 +880,11 @@ contract Organization is ERC20
             // Loop over the voters and count their votes. 1 share counts as 1 vote.
             for (uint256 i=0; i<_voters.length; i++)
             {
-                uint256 votes = shareholder_to_shares[_voters[i]];
-                VoteStatus voteStatus = proposals[_proposalIndex].votes[_voters[i]];
+                address voter = _voters[i];
+                if (voter == address(this)) continue;
+                
+                uint256 votes = shareholder_to_shares[voter];
+                VoteStatus voteStatus = proposals[_proposalIndex].votes[voter];
                 totalVoterSharesCounted += votes;
                 if (voteStatus == VoteStatus.PERMANENT_NO)
                 {
@@ -919,35 +919,125 @@ contract Organization is ERC20
                 }
             }
             
-            // If the organization itself has not voted with its own shares yet,
-            // it actively abstains by default.
-            if (proposals[_proposalIndex].votes[this] == VoteStatus.NOT_VOTED_YET)
+            // Calculate the amount of shares that must have cast a vote
+            uint256 permillageOfSharesNeeded = computeCurrentPermillageOfSharesNeeded(proposals[_proposalIndex].timeSubmitted, voteRules);
+
+            // If not enough votes have been cast,
+            // we should neither reject nor accept the proposal.
+            if ((totalVotesCast * 1000 / _totalSharesThatCanVote) < permillageOfSharesNeeded)
             {
-                totalVotesCast += shareholder_to_shares[this];
+                _result = VoteResult.UNDECIDED;
+            }
+            
+            // If there are enough yes votes to accept...
+            else if ((yesVotes * 1000 / (yesVotes + noVotes)) >= voteRules.yesVotePermillageNeeded)
+            {
+                _result = VoteResult.READY_TO_ACCEPT;
+            }
+            
+            // if there are enough no votes to reject...
+            else
+            {
+                _result = VoteResult.READY_TO_REJECT;
+            }
+        }
+        return;
+    }
+    
+    function _computeProposalVoteResultAndVoteCounts_externallySuppliedVoterList(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) private returns (VoteResult _result, uint256 yesVotes, uint256 noVotes, uint256 totalVotesCast, uint256 totalVoterSharesCounted)
+    {
+        uint256 _totalSharesThatCanVote = totalShares - shareholder_to_shares[address(this)];
+        
+        totalVoterSharesCounted = 0; // yes + no + active abstain + passive abstain + not voted yet
+        totalVotesCast = 0; // yes + no + active abstain
+        yesVotes = 0; // yes
+        noVotes = 0; // no
+        
+        // Select and load the voting rules we should obey when finalizing this proposal.
+        VoteRules memory voteRules = _getVoteRulesOfProposal(proposals[_proposalIndex]);
+        
+        // If this proposal does not require any votes, don't bother counting the votes.
+        // We can accept the proposal immediately.
+        if (voteRules.yesVotePermillageNeeded == 0 && voteRules.quorumPermillage_atStartOfReductionPeriod == 0)
+        {
+            _result = VoteResult.READY_TO_ACCEPT;
+        }
+        
+        // If this proposal is forbidden entirely by the voting rules, don't bother counting the votes.
+        // We can reject the proposal immediately.
+        else if (voteRules.yesVotePermillageNeeded >= 1001 || voteRules.quorumPermillage_atEndOfReductionPeriod >= 1001)
+        {
+            _result = VoteResult.READY_TO_REJECT;
+        }
+        
+        else
+        {
+            // Loop over the voters and count their votes. 1 share counts as 1 vote.
+            for (uint256 i=0; i<_voters.length; i++)
+            {
+                if (_voters[i] == address(this)) continue;
+                
+                // Load the voter's VoteStatus. (this indicates what they voted)
+                VoteStatus voteStatus = proposals[_proposalIndex].votes[_voters[i]];
+                
+                // Prevent same voter from being counted twice. Also, get a gas refund.
+                if (voteStatus == VoteStatus.NOT_VOTED_YET) continue;
+                proposals[_proposalIndex].votes[_voters[i]] = VoteStatus.NOT_VOTED_YET;
+                
+                // Add up the votes.
+                uint256 votes = shareholder_to_shares[_voters[i]];
+                totalVoterSharesCounted += votes;
+                if (voteStatus == VoteStatus.PERMANENT_NO)
+                {
+                    totalVotesCast += votes;
+                    noVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.NO)
+                {
+                    totalVotesCast += votes;
+                    noVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.ACTIVE_ABSTAIN)
+                {
+                    totalVotesCast += votes;
+                }
+                else if (voteStatus == VoteStatus.YES)
+                {
+                    totalVotesCast += votes;
+                    yesVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.PERMANENT_YES)
+                {
+                    totalVotesCast += votes;
+                    yesVotes += votes;
+                }
+                else if (voteStatus == VoteStatus.PASSIVE_ABSTAIN)
+                {
+                }
+                else
+                {
+                    assert(false);
+                }
             }
             
             // Calculate the amount of shares that must have cast a vote
             uint256 permillageOfSharesNeeded = computeCurrentPermillageOfSharesNeeded(proposals[_proposalIndex].timeSubmitted, voteRules);
             
-            // If the voter list was externally supplied,
-            // assume that all unknown votes are the opposite of the externally supplied hint.
-            if (externallySuppliedVoterList)
+            // Assume that all unknown votes are the opposite of the externally supplied hint.
+            if (_acceptHint == true)
             {
-                if (_acceptHint == true)
-                {
-                    // Assume that all unknown votes are NO
-                    noVotes += totalShares - totalVoterSharesCounted;
-                }
-                else
-                {
-                    // Assume that all unknown votes are YES
-                    yesVotes += totalShares - totalVoterSharesCounted;
-                }
+                // Assume that all unknown votes are NO
+                noVotes += _totalSharesThatCanVote - totalVoterSharesCounted;
             }
-            
+            else
+            {
+                // Assume that all unknown votes are YES
+                yesVotes += _totalSharesThatCanVote - totalVoterSharesCounted;
+            }
+
             // If not enough votes have been cast,
             // we should neither reject nor accept the proposal.
-            if ((totalVotesCast * 1000 / totalShares) < permillageOfSharesNeeded)
+            if ((totalVotesCast * 1000 / _totalSharesThatCanVote) < permillageOfSharesNeeded)
             {
                 _result = VoteResult.UNDECIDED;
             }
@@ -957,7 +1047,7 @@ contract Organization is ERC20
             {
                 // If the accept hint does not match the result of the vote count,
                 // we should neither reject nor acccept the proposal.
-                if (externallySuppliedVoterList && _acceptHint == false)
+                if (_acceptHint == false)
                 {
                     _result = VoteResult.UNDECIDED;
                 }
@@ -972,7 +1062,7 @@ contract Organization is ERC20
             {
                 // If the accept hint does not match the result of the vote count,
                 // we should neither reject nor acccept the proposal.
-                if (externallySuppliedVoterList && _acceptHint == true)
+                if (_acceptHint == true)
                 {
                     _result = VoteResult.UNDECIDED;
                 }
@@ -985,14 +1075,26 @@ contract Organization is ERC20
         return;
     }
     
-    function computeProposalVoteResult(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) public view returns (VoteResult)
+    function _computeProposalVoteResult_externallySuppliedVoterList(uint256 _proposalIndex, address[] memory _voters, bool _acceptHint) private returns (VoteResult)
     {
         VoteResult ret;
         uint256 a;
         uint256 b;
         uint256 c;
         uint256 d;
-        (ret, a, b, c, d) = computeProposalVoteResultAndVoteCounts(_proposalIndex, _voters, _acceptHint);
+        (ret, a, b, c, d) = _computeProposalVoteResultAndVoteCounts_externallySuppliedVoterList(_proposalIndex, _voters, _acceptHint);
+        
+        return ret;
+    }
+    
+    function computeProposalVoteResult_internallySuppliedVoterList(uint256 _proposalIndex) public view returns (VoteResult)
+    {
+        VoteResult ret;
+        uint256 a;
+        uint256 b;
+        uint256 c;
+        uint256 d;
+        (ret, a, b, c, d) = computeProposalVoteResultAndVoteCounts_internallySuppliedVoterList(_proposalIndex);
         
         return ret;
     }
