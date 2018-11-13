@@ -291,15 +291,9 @@ contract Organization is ERC20
         }
         else
         {
-            bytes4 functionId;
-            if (dataLength >= 4)
+            if (dataLength >= 4 && functionId_to_subcontract[msg.sig].contractAddress != 0x0)
             {
-                functionId = bytes4(msg.data[0]) | (bytes4(msg.data[1]) >> 8) | (bytes4(msg.data[2]) >> 16) | (bytes4(msg.data[3]) >> 24);
-            }
-            
-            if (dataLength >= 4 && functionId_to_subcontract[functionId].contractAddress != 0x0)
-            {
-                subcontract = functionId_to_subcontract[functionId];
+                subcontract = functionId_to_subcontract[msg.sig];
             }
             else
             {
@@ -741,11 +735,13 @@ contract Organization is ERC20
             }
         }
         
+        // Execute all the transactions specified by the proposal
         for (j=0; j<proposal.transactions.length; j++)
         {
             _executeTransaction(proposal.transactions[j]);
         }
         
+        // If the organization refunds fees, do so up to the defined limits.
         if (organizationRefundsFees)
         {
             uint256 gasUsed = _startGas - gasleft();
@@ -1133,9 +1129,9 @@ contract Organization is ERC20
         // The subcontract must be deployed before it is added.
         // Shareholders need to know the code of the subcontract to be able to
         // make an informed decision about whether or not to add it.
-        // This does not prevent a proposal to add it from being submitted before
-        // it is deployed, so the user interface should alert voters if the
-        // subcontract code is not known.
+        // This does not prevent a proposal to add a subcontract from being submitted
+        // before the subcontract is deployed, so the user interface should alert
+        // voters if the subcontract code is not known.
         uint256 codeSize;
         assembly { codeSize := extcodesize(_subcontract) }
         require(codeSize > 0);
