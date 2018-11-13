@@ -284,31 +284,34 @@ contract Organization is ERC20
         
         bytes memory data = msg.data;
         
+        // If no data was passed to this contract, select the subcontract that handles messages without data.
         if (dataLength == 0)
         {
-            // If a subcontract has been defined for messages without data, execute it.
             subcontract = noData_subcontract;
         }
+        
+        // Otherwise, if a subcontract has been defined for the current function ID, select it.
+        else if (dataLength >= 4 && functionId_to_subcontract[msg.sig].contractAddress != 0x0)
+        {
+            subcontract = functionId_to_subcontract[msg.sig];
+        }
+        
+        // Otherwise, if a subcontract has been defined for the current data pattern, select it.
         else
         {
-            if (dataLength >= 4 && functionId_to_subcontract[msg.sig].contractAddress != 0x0)
+            uint256 len = subcontractAddressesAndDataPatterns.length;
+            for (i=0; i<len; i++)
             {
-                subcontract = functionId_to_subcontract[msg.sig];
-            }
-            else
-            {
-                uint256 len = subcontractAddressesAndDataPatterns.length;
-                for (i=0; i<len; i++)
+                SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
+                if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
                 {
-                    SubcontractAddressAndDataPattern storage sadp = subcontractAddressesAndDataPatterns[i];
-                    if (sadp.subcontract.contractAddress != 0x0 && _matchDataPatternToData(sadp.dataPattern, data))
-                    {
-                        subcontract = sadp.subcontract;
-                        break;
-                    }
+                    subcontract = sadp.subcontract;
+                    break;
                 }
             }
         }
+        
+        
         
         // If we could not find a matching subcontract definition, revert the transaction.
         if (subcontract.contractAddress == 0x0)
@@ -321,7 +324,8 @@ contract Organization is ERC20
         {
         }
         
-        // If we found a matching subcontract definition, forward the function call to the subcontract.
+        // If we found a matching subcontract definition, forward the function call to the subcontract
+        // according to the specified rules.
         else
         {
             uint256 _etherForwardingSetting = subcontract.etherForwardingSetting;
@@ -346,7 +350,6 @@ contract Organization is ERC20
                 }
             }
             
-            
             require(subcontract.contractAddress.call.value((_etherForwardingSetting == 1) ? msg.value : 0)(data) == true);
         }
     }
@@ -359,7 +362,7 @@ contract Organization is ERC20
     ///////////////////////////////////////////////////////
     ////// Communication
     
-    event Message(bytes32 indexed _hash, address indexed _from, address indexed _to, string _message, bool _isEncrypted);
+    /*event Message(bytes32 indexed _hash, address indexed _from, address indexed _to, string _message, bool _isEncrypted);
     event MessageResponse(bytes32 indexed _message, bytes32 indexed _responseToMessage, uint256 indexed _responseToProposal);
     
     function sendMessage(address _to, string _message, bool _isEncrypted, uint256 _responseToProposal, bytes32 _responseToMessage) external
@@ -381,7 +384,7 @@ contract Organization is ERC20
     function voteMessage(bytes32 _message, uint256 _vote) external
     {
         emit MessageVote(_message, msg.sender, _vote);
-    }
+    }*/
     
     
     
@@ -842,6 +845,7 @@ contract Organization is ERC20
         READY_TO_REJECT,
         READY_TO_ACCEPT
     }
+    event ProposalVoteSet(uint256 indexed _proposalIndex, address indexed _voter, VoteStatus indexed _voteStatus);
     
     function computeCurrentPermillageOfSharesNeeded(uint256 _timeSubmitted, VoteRules memory voteRules) private view returns (uint256)
     {
@@ -1068,6 +1072,9 @@ contract Organization is ERC20
         
         // Store the vote
         proposal.votes[msg.sender] = _newVoteStatus;
+        
+        // Broadcast the vote event
+        emit ProposalVoteSet(_proposalIndex, msg.sender, _newVoteStatus);
         
         // If the voter wants to finalize the proposal immediately, try to do so.
         if (_tryFinalize)
