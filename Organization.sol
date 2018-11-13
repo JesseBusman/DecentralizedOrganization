@@ -462,16 +462,6 @@ contract Organization is ERC20
     
     function _getVoteRulesOfTransaction(Transaction memory transaction) private view returns (VoteRules storage voteRules)
     {
-        bytes4 functionId = 0x00000000;
-        if (transaction.data.length >= 4)
-        {
-            functionId =
-                (bytes4(transaction.data[0]) >>  0) |
-                (bytes4(transaction.data[1]) >>  8) |
-                (bytes4(transaction.data[2]) >> 16) |
-                (bytes4(transaction.data[3]) >> 24);
-        }
-        
         // destinationAddressAndDataPattern_to_voteRules
         DataPatternAndVoteRulesHash[] storage dataPatternAndVoteRulesHashes = addressAndDataPattern_to_voteRulesHash[transaction.destination];
         for (uint256 i=0; i<dataPatternAndVoteRulesHashes.length; i++)
@@ -485,7 +475,7 @@ contract Organization is ERC20
         }
         
         // Use addressAndFunctionId_to_voteRules
-        bytes32 addressAndFunctionId = _packAddressAndFunctionId(transaction.destination, functionId);
+        bytes32 addressAndFunctionId = _packAddressAndFunctionId(transaction.destination, msg.sig);
         voteRulesHash = addressAndFunctionId_to_voteRulesHash[addressAndFunctionId];
         if (voteRulesHash != 0x0)
         {
@@ -512,7 +502,7 @@ contract Organization is ERC20
         }
         
         // functionId_to_voteRules
-        voteRulesHash = functionId_to_voteRulesHash[functionId];
+        voteRulesHash = functionId_to_voteRulesHash[msg.sig];
         if (voteRulesHash != 0x0)
         {
             return voteRulesHash_to_voteRules[voteRulesHash];
