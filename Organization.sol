@@ -1334,35 +1334,14 @@ contract Organization is ERC20
         require(_index < _array.length);
         require(_array[_index].voteRulesHash != 0x0);
         
-        // If it's the last one...
-        if (_index == dataPattern_to_voteRulesHash.length-1)
-        {
-            // ... delete the last one
-            dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1].voteRulesHash = 0x0;
-            
-            // ... shrink the array by 1
-            dataPattern_to_voteRulesHash.length--;
-        }
+        // ... copy the last one into its slot
+        dataPattern_to_voteRulesHash[_index] = dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1];
         
-        // If it's not the last one AND there are at least 2...
-        else if (dataPattern_to_voteRulesHash.length >= 2 && _index < dataPattern_to_voteRulesHash.length-1)
-        {
-            // ... copy the last one into its slot
-            dataPattern_to_voteRulesHash[_index] = dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1];
-            
-            // ... delete the last one
-            dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1].voteRulesHash = 0x0;
-            
-            // ... shrink the array by 1
-            dataPattern_to_voteRulesHash.length--;
-        }
+        // ... delete the last one
+        dataPattern_to_voteRulesHash[dataPattern_to_voteRulesHash.length-1].voteRulesHash = 0x0;
         
-        // Otherwise ...
-        else
-        {
-            // ... just set its existance to false
-            dataPattern_to_voteRulesHash[_index].voteRulesHash = 0x0;
-        }
+        // ... shrink the array by 1
+        dataPattern_to_voteRulesHash.length--;
     }
     
     
@@ -1497,7 +1476,6 @@ contract Organization is ERC20
     
     // These functions can help user interfaces or other contracts
     // to fetch information more easily.
-    
     
     
     // Shareholder view functions
@@ -1671,7 +1649,7 @@ contract Organization is ERC20
         }
     }
     
-    function tryFinalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _accept) external returns (uint256[] memory finalizedProposalIndices)
+    function tryFinalizeProposals(uint256[] _proposalIndices, address[] _voters, bool[] _acceptHints) public returns (uint256[] memory finalizedProposalIndices)
     {
         uint256 amount = _proposalIndices.length;
         finalizedProposalIndices = new uint256[](amount);
@@ -1679,7 +1657,7 @@ contract Organization is ERC20
         for (uint256 i=0; i<amount; i++)
         {
             uint256 proposalIndex = _proposalIndices[i];
-            if (tryFinalizeProposal(proposalIndex, _voters, _accept[i]))
+            if (tryFinalizeProposal(proposalIndex, _voters, _acceptHints[i]))
             {
                 finalizedProposalIndices[amountFinalized] = proposalIndex;
                 amountFinalized++;
@@ -1696,6 +1674,36 @@ contract Organization is ERC20
     function finalizeProposal(uint256 _proposalIndex, address[] _voters, bool _acceptHint) external
     {
         require(tryFinalizeProposal(_proposalIndex, _voters, _acceptHint));
+    }
+    
+    function tryFinalizeProposalByVoterIndices(uint256 _proposalIndex, uint256[] _voterIndicesInProposalVotersArray, bool _acceptHint) public returns (bool)
+    {
+        // Passing an array of indices instead of an array of addresses can sometimes be more gas-efficient.
+        uint256 amountOfVoters = _voterIndicesInProposalVotersArray.length;
+        address[] memory voters = new address[](amountOfVoters);
+        address[] storage proposalVoters = proposals[_proposalIndex].voters;
+        for (uint256 i=0; i<amountOfVoters; i++)
+        {
+            voters[i] = proposalVoters[_voterIndicesInProposalVotersArray[i]];
+        }
+        return tryFinalizeProposal(_proposalIndex, voters, _acceptHint);
+    }
+    
+    function tryFinalizeProposalsByVoterIndices(uint256[] _proposalIndices, uint256[] _voterIndicesInShareholdersArray, bool[] _acceptHints) public returns (uint256[] memory finalizedProposalIndices)
+    {
+        // Passing an array of indices instead of an array of addresses can sometimes be more gas-efficient.
+        uint256 amountOfVoters = _voterIndicesInShareholdersArray.length;
+        address[] memory voters = new address[](amountOfVoters);
+        for (uint256 i=0; i<amountOfVoters; i++)
+        {
+            voters[i] = shareholders[_voterIndicesInShareholdersArray[i]];
+        }
+        return tryFinalizeProposals(_proposalIndices, voters, _acceptHints);
+    }
+    
+    function finalizeProposalByVoterIndices(uint256 _proposalIndex, uint256[] _voterIndicesInProposalVotersArray, bool _acceptHint) external
+    {
+        require(tryFinalizeProposalByVoterIndices(_proposalIndex, _voterIndicesInProposalVotersArray, _acceptHint));
     }
     
     
@@ -1742,6 +1750,20 @@ contract Organization is ERC20
         return shareholder_to_spender_to_approvedAmount[_owner][_spender];
     }
     
+    function _deleteShareholder(address _deletedShareholder) private
+    {
+        uint256 deletedShareholderIndex = shareholder_to_arrayIndex[_deletedShareholder];
+        address shareholderToMoveBack = shareholders[shareholders.length-1];
+        
+        // Move shareholder back
+        shareholders[deletedShareholderIndex] = shareholderToMoveBack;
+        shareholder_to_arrayIndex[shareholderToMoveBack] = deletedShareholderIndex;
+        
+        // Delete shareholder
+        shareholder_to_arrayIndex[_deletedShareholder] = 0;
+        shareholders.length--;
+    }
+    
     function _transferShares(address _from, address _to, uint256 _amount, bool _callTokenFallback, bytes memory _data) private
     {
         require(shareholder_to_shares[_from] >= _amount);
@@ -1751,16 +1773,16 @@ contract Organization is ERC20
         
         //// Update the shareholders array
         
-        // If the _from address now has 0 shares, remove it from the shareholders list.
-        if (_from != address(this) && shareholder_to_shares[_from] == 0 && shareholder_to_arrayIndex[_from] != 0)
+        // If the _from address now has 0 shares and it's in the shareholders array,
+        // remove it from the shareholders array.
+        if (shareholder_to_shares[_from] == 0 && shareholder_to_arrayIndex[_from] != 0)
         {
-            shareholders[shareholder_to_arrayIndex[_from]] = shareholders[shareholders.length-1];
-            shareholders.length--;
-            shareholder_to_arrayIndex[_from] = 0;
+            _deleteShareholder(_from);
         }
         
-        // If the _to address now has >0 shares but is not in the shareholders list, add it.
-        if (shareholder_to_shares[_to] != 0 && shareholder_to_arrayIndex[_to] == 0)
+        // If the _to address now has > 0 shares and it's not in the shareholders array,
+        // add it to the shareholders array.
+        if (shareholder_to_shares[_to] > 0 && shareholder_to_arrayIndex[_to] == 0)
         {
             shareholder_to_arrayIndex[_to] = shareholders.length;
             shareholders.push(_to);
